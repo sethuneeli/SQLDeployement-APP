@@ -1,0 +1,1411 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sethu Neeli - MA - GIT Portal SQL</title>
+  <style>
+    :root{
+      --blue1:#0b5eff;
+      --blue2:#3aa0ff;
+      --yellow1:#ffd24d;
+      --yellow2:#ffea7f;
+      --card-bg: rgba(255,255,255,0.85);
+      --muted:#445;
+    }
+    html,body{height:100%;margin:0;padding:0}
+    body{
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+      background: linear-gradient(120deg,var(--blue1),var(--yellow1));
+      background-size:400% 400%;
+      animation: bg-anim 12s ease infinite;
+      color: #07203b;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+    @keyframes bg-anim{
+      0%{background-position:0% 50%}
+      50%{background-position:100% 50%}
+      100%{background-position:0% 50%}
+    }
+    .app-container{
+      max-width:1200px;margin:36px auto;padding:28px;border-radius:16px;background:linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,249,255,0.7));box-shadow:0 8px 30px rgba(8,20,40,0.35);
+      backdrop-filter: blur(6px);
+    }
+    h1{margin-top:0;color:var(--muted);font-weight:600}
+    textarea{width:100%;height:180px;font-family:monospace;padding:10px;border-radius:8px;border:1px solid rgba(10,20,40,0.06)}
+    select,button,input{padding:10px 12px;margin:6px 0;border-radius:8px;border:1px solid rgba(10,20,40,0.08);background:white}
+    button{cursor:pointer;background:linear-gradient(90deg,var(--blue2),#6fb8ff);color:white;border:none}
+    button:disabled{opacity:0.6;cursor:not-allowed}
+    pre{background:#f7f7f7;padding:12px;overflow:auto;border-radius:8px}
+    .row{display:flex;gap:12px;align-items:center}
+    .col{display:flex;flex-direction:column;gap:6px}
+    label{font-weight:600;color:#123}
+  .inline-grid{display:flex;gap:20px}
+  .inline-left{flex:1}
+  .inline-right{flex:1;min-width:320px}
+  #inlineResult{background:#fff;padding:12px;border-radius:8px;border:1px solid rgba(10,20,40,0.04);max-height:300px;overflow:auto}
+  /* Environment button color mapping */
+  .btn-dev{background:linear-gradient(90deg,var(--yellow1),var(--yellow2));color:#222}
+  .btn-stage{background:linear-gradient(90deg,var(--blue1),var(--blue2));color:white}
+  .btn-prod{background:linear-gradient(90deg,#2ecc71,#2ab866);color:white}
+  .btn-env{border:1px solid rgba(0,0,0,0.05);padding:8px 12px;border-radius:8px}
+  .btn-active{box-shadow:0 6px 18px rgba(0,0,0,0.18);transform:translateY(-2px)}
+  /* Export buttons in modal: high contrast for visibility */
+  .btn-export{background:linear-gradient(90deg,var(--blue2),#4a9eff);color:#fff;padding:6px 10px;border-radius:6px;border:none;font-weight:600}
+  .btn-export-alt{background:linear-gradient(90deg,#2ecc71,#28b463);color:#fff;padding:6px 10px;border-radius:6px;border:none;font-weight:600}
+    /* status dot and small disconnect button */
+    .env-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:8px;vertical-align:middle;box-shadow:0 1px 3px rgba(0,0,0,0.12);background:#e74c3c}
+    .env-dot.green{background:#2ecc71}
+    .disconnect-btn{margin-left:8px;padding:6px 8px;font-size:0.85em;background:#ff6b6b;border:none;color:white;border-radius:8px;display:none;cursor:pointer}
+    .disconnect-btn.show{display:inline-block}
+    @media (max-width:800px){.row{flex-direction:column;align-items:stretch}}
+  /* Diff styles */
+  .diff-line{font-family:monospace;padding:4px;border-radius:4px;margin-bottom:2px}
+  .diff-context{color:#333;background:transparent}
+  .diff-added{background:#f3fff3;color:#083;}
+  .diff-removed{background:#fff6f6;color:#b21;}
+  /* Added line: lighter green background with stronger text color */
+  .diff-added{background:#e6fff0;color:#006400;border-left:4px solid rgba(0,100,0,0.12);padding-left:6px}
+  .diff-removed{background:#fff6f6;color:#b21;}
+  /* Inline word marker for additions: no heavy background, green text and subtle underline */
+  .diff-word-added{background:transparent;color:#007a1f;font-weight:600;border-bottom:2px solid rgba(0,122,31,0.12);padding:0 2px}
+  .diff-word-removed{background:#ffdede;border-radius:2px;padding:0 2px;text-decoration:line-through}
+  /* Side-by-side diff layout */
+  .sbs-container{font-family:monospace;border-radius:6px;border:1px solid #eee;background:#fff;overflow:auto}
+  .sbs-row{display:flex;padding:2px 8px;border-bottom:1px solid #fafafa}
+  .sbs-left,.sbs-right{width:50%;box-sizing:border-box;padding:4px 8px;white-space:pre-wrap}
+  .sbs-left{border-right:1px solid #f3f3f3;color:#b21}
+  .sbs-right{color:#006400}
+  .sbs-line-ctx{color:#333;background:transparent}
+    /* diff-word-removed kept previously */
+    /* Modal sizing classes (regular vs compact) */
+    #objectPreviewModal.modal-regular { width:80% !important; max-width:900px !important; height:70% !important; }
+    #objectPreviewModal.modal-compact { width:60% !important; max-width:700px !important; height:50% !important; }
+    @media (max-width:700px) {
+      #objectPreviewModal.modal-regular, #objectPreviewModal.modal-compact { width:95% !important; height:80% !important; max-width:unset !important; }
+    }
+    /* Inline result fancy layout */
+    .inline-result-toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .inline-result-actions{display:flex;gap:6px;align-items:center}
+    .inline-result-meta{font-size:0.9em;color:#445}
+    .inline-table{width:100%;border-collapse:collapse;font-family:Inter, Arial, sans-serif}
+    .inline-table th{background:#f3f6fb;padding:8px;border-bottom:1px solid #e9eef7;text-align:left;font-weight:600}
+    .inline-table td{padding:8px;border-bottom:1px solid #f7f9fc;vertical-align:top}
+    .inline-pager{display:flex;gap:6px;align-items:center}
+  </style>
+  <!-- jsdiff (diff library) for improved inline diffs -->
+  <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+  <h1> Sethu Neeli - MA - GIT & SQL Management</h1>
+
+  <section>
+    <h2>Environment</h2>
+    <label for="env">Environment:</label>
+    <select id="env">
+      <option value="DEV">DEV</option>
+      <option value="TEST">TEST</option>
+      <option value="LIVE">LIVE</option>
+    </select>
+      <div class="row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="btnDev" class="btn-env btn-dev" onclick="connectSQL('DEV')">Connect to DEV <span id="dotDev" class="env-dot"></span></button>
+          <button id="btnDevDisconnect" class="disconnect-btn" onclick="disconnect('DEV')">Disconnect</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="btnStage" class="btn-env btn-stage" onclick="connectSQL('TEST')">Connect to TEST <span id="dotStage" class="env-dot"></span></button>
+          <button id="btnStageDisconnect" class="disconnect-btn" onclick="disconnect('TEST')">Disconnect</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="btnProd" class="btn-env btn-prod" onclick="connectSQL('LIVE')">Connect to LIVE <span id="dotProd" class="env-dot"></span></button>
+          <button id="btnProdDisconnect" class="disconnect-btn" onclick="disconnect('LIVE')">Disconnect</button>
+        </div>
+      </div>
+  </section>
+
+  <section>
+    <h2>Run Inline SQL</h2>
+    <div class="inline-grid">
+      <div class="inline-left">
+        <label for="script">SQL Script:</label>
+        <textarea id="script" placeholder="SELECT TOP 10 * FROM MyTable"></textarea>
+        <div class="row">
+          <button id="execute">Execute</button>
+          <span id="inlineStatus"></span>
+        </div>
+      </div>
+      <div class="inline-right">
+        <h3>Inline Result</h3>
+        <div id="inlineResult"><em>No result yet</em></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Available Script Files</h2>
+    <div class="row">
+    <select id="scriptFileSelect"><option>Loading...</option></select>
+    <button id="refreshScripts">Refresh</button>
+    <button id="runScript">Run Selected Script</button>
+    <button id="previewPlan">Preview Plan</button>
+      </div>
+    <div style="margin-top:8px;">
+      <h4>Plan Preview</h4>
+      <div id="planPreview"><em>No plan loaded</em></div>
+    </div>
+  </section>
+
+  <section style="margin-top:12px">
+    <h3>Execution Metadata</h3>
+    <div class="row">
+      <input id="metaUser" placeholder="user (optional)" />
+      <input id="metaCorrelation" placeholder="correlationId (optional)" />
+      <input id="metaGitCommit" placeholder="gitCommit (optional)" />
+    </div>
+  </section>
+
+  <section style="margin-top:18px">
+    <h2>Object Migration (Dev → Test)</h2>
+    <div class="row">
+      <label style="font-weight:600">Source:</label>
+      <select id="srcEnv"><option value="DEV">DEV</option><option value="TEST">TEST</option><option value="LIVE">LIVE</option></select>
+      <label style="font-weight:600">Target:</label>
+      <select id="tgtEnv"><option value="TEST">TEST</option><option value="DEV">DEV</option><option value="LIVE">LIVE</option></select>
+  <button id="refreshObjects">Refresh Object List</button>
+  <button id="selectAllObjects" style="margin-left:6px">Select All</button>
+  <button id="clearAllObjects" style="margin-left:6px">Clear Selection</button>
+  <input id="objectSearchInput" placeholder="Search objects (schema.name or name or type)" style="margin-left:8px;padding:8px;border-radius:8px;border:1px solid #ddd" />
+  <button id="objectSearchBtn" style="margin-left:6px">Search</button>
+  <button id="clearObjectSearch" style="margin-left:6px">Clear</button>
+  <label style="margin-left:8px;font-weight:400"><input type="checkbox" id="includeSystemObjects" /> Include system objects</label>
+      <button id="generateDiff">Generate Implementation</button>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:12px">
+      <div style="flex:1">
+        <h4>Objects</h4>
+        <div id="objectList" style="max-height:260px;overflow:auto;background:#fff;padding:8px;border-radius:8px;border:1px solid #eee"></div>
+      </div>
+      <div style="flex:1">
+        <h4>Plan / Generated Scripts</h4>
+        <div id="migrationPlan" style="max-height:360px;overflow:auto;background:#fff;padding:8px;border-radius:8px;border:1px solid #eee">No plan generated</div>
+      </div>
+    </div>
+  </section>
+
+  <div style="margin-top:8px">
+    <button id="viewSelectedBtn" style="margin-right:8px">View Selected on Target</button>
+  </div>
+
+  <!-- Modal for viewing source vs target object create script side-by-side -->
+  <div id="objectPreviewModal" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:80%;max-width:900px;height:70%;background:#fff;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,0.3);z-index:9999;padding:12px;overflow:hidden"> 
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong id="objectPreviewTitle">Object Preview</strong>
+      <div style="display:flex;gap:8px;align-items:center">
+  <button id="exportSourceBtn" class="btn-export" style="margin-right:8px">Export Source CREATE</button>
+  <button id="exportTargetBtn" class="btn-export-alt">Export Target CREATE</button>
+  <button id="modalCompactToggle" title="Toggle compact view" style="padding:6px 8px;border-radius:6px;border:1px solid #ddd;background:#fff">Compact</button>
+        <button id="closeObjectPreview" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;height:52%">
+      <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid #eee;padding-right:8px;overflow:auto;min-width:0">
+        <div style="font-weight:600;margin-bottom:6px">Source (selected source env)</div>
+        <pre id="objectPreviewSource" style="background:#f8f8f8;padding:8px;border-radius:6px;overflow:auto;flex:1;font-family:monospace;white-space:pre-wrap"></pre>
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column;padding-left:8px;overflow:auto;min-width:0">
+        <div style="font-weight:600;margin-bottom:6px">Target (selected target env)</div>
+        <pre id="objectPreviewTarget" style="background:#f8f8f8;padding:8px;border-radius:6px;overflow:auto;flex:1;font-family:monospace;white-space:pre-wrap"></pre>
+      </div>
+    </div>
+    <!-- Inline diff removed (compare rendered in Source/Target panels) -->
+  </div>
+
+  <section>
+    <h2>Upload SQL Script</h2>
+    <input type="file" id="sqlFile" accept=".sql,.txt" />
+    <button id="uploadExecute">Upload & Execute (inline)</button>
+  </section>
+
+  <section>
+    <h2>GIT</h2>
+    <div class="col" style="max-width:420px;">
+      <textarea id="commitMessage" placeholder="Commit Message" rows="3"></textarea>
+      <div class="row"><button id="gitPush">Push to Remote</button></div>
+    </div>
+    <div class="col" style="margin-top:12px; max-width:640px;">
+      <h3>Remotes</h3>
+      <div class="row">
+        <select id="remotesSelect"><option>Loading...</option></select>
+        <button id="refreshRemotes">Refresh</button>
+        <button id="removeRemote">Remove</button>
+      </div>
+      <div style="margin-top:8px;">
+        <input id="newRemoteName" placeholder="remote name" />
+        <input id="newRemoteUrl" placeholder="remote url (https:// or git@)" style="width:420px;" />
+        <div class="row"><button id="addRemote">Add Remote</button><button id="setUrlRemote">Set URL</button></div>
+      </div>
+    </div>
+  </section>
+
+  <h2>Result</h2>
+  <div id="result"><em>No result yet</em></div>
+
+  <section style="margin-top:18px">
+    <h2>Audit</h2>
+    <div style="margin-top:8px">
+      <label style="font-weight:600">Audit Login (default admin/admin)</label>
+      <div class="row" style="align-items:center">
+        <input id="auditUser" placeholder="username" value="admin" style="width:120px" />
+        <input id="auditPass" placeholder="password" value="admin" style="width:120px" />
+        <button id="auditLogin">Set Credentials</button>
+        <button id="sendTestAudit" style="margin-left:8px">Send Test Audit</button>
+        <span id="auditStatus" style="margin-left:12px;font-weight:600;color:#b33">Not authenticated</span>
+      </div>
+    </div>
+    <div id="auditControls" style="display:none">
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <select id="auditEnv"><option value="DEV">DEV</option><option value="TEST">TEST</option><option value="LIVE">LIVE</option></select>
+        <input id="auditAction" placeholder="action (apply/rollback)" />
+        <input id="auditSince" placeholder="since (YYYY-MM-DD)" />
+        <input id="auditUntil" placeholder="until (YYYY-MM-DD)" />
+      </div>
+      <div id="auditView" style="margin-top:8px;display:none;max-height:420px;overflow:auto;background:#fff;padding:10px;border-radius:8px;border:1px solid #eee"></div>
+    </div>
+  </section>
+
+  <script>
+    // Use jsdiff to render a rich, styled diff (line-level and inline word diffs)
+    function escapeHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function renderDiffHtml(aText, bText) {
+      const a = aText || '';
+      const b = bText || '';
+      const parts = Diff.diffLines(a, b);
+      let html = '';
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (part.added) {
+          // added lines
+          const lines = part.value.split(/\r?\n/);
+          lines.forEach(ln => { if (ln === '') return; html += `<div class="diff-line diff-added">+ ${escapeHtml(ln)}</div>`; });
+        } else if (part.removed) {
+          // If a removed part is immediately followed by an added part, show inline word diffs
+          const next = parts[i+1];
+          if (next && next.added) {
+            const remLines = part.value.split(/\r?\n/);
+            const addLines = next.value.split(/\r?\n/);
+            const max = Math.max(remLines.length, addLines.length);
+            for (let k = 0; k < max; k++) {
+              const r = remLines[k] || '';
+              const aL = addLines[k] || '';
+              // compute word diff
+              const wdiff = Diff.diffWordsWithSpace(r, aL);
+              let removedHtml = '';
+              let addedHtml = '';
+              wdiff.forEach(w => {
+                if (w.added) addedHtml += `<span class="diff-word-added">${escapeHtml(w.value)}</span>`;
+                else if (w.removed) removedHtml += `<span class="diff-word-removed">${escapeHtml(w.value)}</span>`;
+                else { removedHtml += escapeHtml(w.value); addedHtml += escapeHtml(w.value); }
+              });
+              if (removedHtml.trim() !== '') html += `<div class="diff-line diff-removed">- ${removedHtml}</div>`;
+              if (addedHtml.trim() !== '') html += `<div class="diff-line diff-added">+ ${addedHtml}</div>`;
+            }
+            i++; // skip the next added part because we've consumed it
+          } else {
+            const lines = part.value.split(/\r?\n/);
+            lines.forEach(ln => { if (ln === '') return; html += `<div class="diff-line diff-removed">- ${escapeHtml(ln)}</div>`; });
+          }
+        } else {
+          // unchanged/context lines
+          const lines = part.value.split(/\r?\n/);
+          lines.forEach(ln => { if (ln === '') return; html += `<div class="diff-line diff-context"> ${escapeHtml(ln)}</div>`; });
+        }
+      }
+      return html;
+    }
+
+      /* renderTargetHighlighted removed when Target Code pane was removed */
+
+      // Utility: download a string as a file (used by Export buttons)
+      function downloadFile(filename, content) {
+        try {
+          const blob = new Blob([content || ''], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename || 'download.txt';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => { try { URL.revokeObjectURL(url); } catch(e){} }, 3000);
+        } catch (e) { console.error('downloadFile error', e); alert('Download failed: ' + (e && e.message)); }
+      }
+
+    // Helper to render result JSON
+    function renderResult(obj) {
+      document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(obj, null, 2) + '</pre>';
+    }
+
+    // Inline result rendering helpers
+    function buildTableHtml(recordset, page = 0, pageSize = 50) {
+      if (!recordset || !recordset.length) return '<div><em>No rows</em></div>';
+      const cols = Object.keys(recordset[0]);
+      const total = recordset.length;
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      const start = page * pageSize; const end = Math.min(total, start + pageSize);
+      let html = '';
+      html += `<div class="inline-result-toolbar"><div class="inline-result-actions"><button class="btn-export" id="copyJsonBtn">Copy JSON</button><button class="btn-export-alt" id="downloadCsvBtn">Download CSV</button></div><div class="inline-result-meta">Showing ${start+1}-${end} of ${total} rows</div></div>`;
+      html += '<div style="overflow:auto;max-height:260px"><table class="inline-table"><thead><tr>' + cols.map(c=>`<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+      for (let i = start; i < end; i++) {
+        const row = recordset[i]; html += '<tr>' + cols.map(c=>`<td>${escapeHtml(row[c]===null? 'NULL' : String(row[c]))}</td>`).join('') + '</tr>';
+      }
+      html += '</tbody></table></div>';
+      // pager
+      if (pages > 1) {
+        html += '<div class="inline-pager" style="margin-top:8px;display:flex;justify-content:flex-end;align-items:center;gap:6px"><button id="pagerPrev">Prev</button><span>Page '+(page+1)+' of '+pages+'</span><button id="pagerNext">Next</button></div>';
+      }
+      return html;
+    }
+
+    function toCSV(recordset) {
+      if (!recordset || !recordset.length) return '';
+      const cols = Object.keys(recordset[0]);
+      const esc = (v) => '"' + String(v===null? '' : v).replace(/"/g,'""') + '"';
+      const lines = [cols.map(esc).join(',')];
+      recordset.forEach(r => { lines.push(cols.map(c => esc(r[c]===undefined? '': r[c])).join(',')); });
+      return lines.join('\n');
+    }
+
+    async function copyToClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch(e) {} ta.remove();
+    }
+
+    // Renders inline execution result into #inlineResult with toolbar and paging
+    function renderInlineResult(json) {
+      const container = document.getElementById('inlineResult');
+      if (!json) { container.innerHTML = '<em>No result</em>'; return; }
+      if (!json.success && json.error) {
+        container.innerHTML = '<pre style="color:#b21">' + escapeHtml(json.error || json.message || 'Error') + '</pre>';
+        return;
+      }
+      const recordset = json.recordset || [];
+      // attach a small state on the container for paging
+      container._rs = recordset;
+      container._page = 0;
+      container._pageSize = 50;
+      container.innerHTML = buildTableHtml(recordset, container._page, container._pageSize);
+      // wire actions
+      const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+      if (downloadCsvBtn) downloadCsvBtn.addEventListener('click', () => {
+        const csv = toCSV(container._rs);
+        downloadFile('result.csv', csv);
+      });
+      const copyJsonBtn = document.getElementById('copyJsonBtn');
+      if (copyJsonBtn) copyJsonBtn.addEventListener('click', async () => {
+        await copyToClipboard(JSON.stringify(container._rs, null, 2));
+        copyJsonBtn.textContent = 'Copied'; setTimeout(()=>copyJsonBtn.textContent = 'Copy JSON',1200);
+      });
+      const pagerPrev = document.getElementById('pagerPrev');
+      const pagerNext = document.getElementById('pagerNext');
+      if (pagerPrev) pagerPrev.addEventListener('click', () => { if (container._page>0) { container._page--; container.innerHTML = buildTableHtml(container._rs, container._page, container._pageSize); renderInlineResultAttachEvents(); } });
+      if (pagerNext) pagerNext.addEventListener('click', () => { const pages = Math.max(1, Math.ceil(container._rs.length / container._pageSize)); if (container._page < pages-1) { container._page++; container.innerHTML = buildTableHtml(container._rs, container._page, container._pageSize); renderInlineResultAttachEvents(); } });
+
+      // reattach events after replacing innerHTML
+      function renderInlineResultAttachEvents() {
+        const dBtn = document.getElementById('downloadCsvBtn'); if (dBtn) dBtn.addEventListener('click', () => { downloadFile('result.csv', toCSV(container._rs)); });
+        const cBtn = document.getElementById('copyJsonBtn'); if (cBtn) cBtn.addEventListener('click', async () => { await copyToClipboard(JSON.stringify(container._rs, null, 2)); cBtn.textContent='Copied'; setTimeout(()=>cBtn.textContent='Copy JSON',1200); });
+        const pPrev = document.getElementById('pagerPrev'); if (pPrev) pPrev.addEventListener('click', () => { if (container._page>0) { container._page--; container.innerHTML = buildTableHtml(container._rs, container._page, container._pageSize); renderInlineResultAttachEvents(); } });
+        const pNext = document.getElementById('pagerNext'); if (pNext) pNext.addEventListener('click', () => { const pages = Math.max(1, Math.ceil(container._rs.length / container._pageSize)); if (container._page < pages-1) { container._page++; container.innerHTML = buildTableHtml(container._rs, container._page, container._pageSize); renderInlineResultAttachEvents(); } });
+      }
+    }
+    
+    // Render a side-by-side diff: left = source (removed), right = target (added)
+    function renderSideBySideDiff(aText, bText) {
+      const a = aText || '';
+      const b = bText || '';
+      const parts = Diff.diffLines(a, b);
+      let rows = [];
+      // Build paired rows: when removed followed by added, pair them; otherwise pair with empty
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (part.removed) {
+          const next = parts[i+1];
+          if (next && next.added) {
+            const remLines = part.value.split(/\r?\n/).filter(l=>l!=='');
+            const addLines = next.value.split(/\r?\n/).filter(l=>l!=='');
+            const max = Math.max(remLines.length, addLines.length);
+            for (let k=0;k<max;k++) {
+              const left = remLines[k] || '';
+              const right = addLines[k] || '';
+              // compute word-level highlighting
+              const wdiff = Diff.diffWordsWithSpace(left, right);
+              let leftHtml=''; let rightHtml='';
+              wdiff.forEach(w=>{
+                if (w.added) { rightHtml += `<span class="diff-word-added">${escapeHtml(w.value)}</span>`; }
+                else if (w.removed) { leftHtml += `<span class="diff-word-removed">${escapeHtml(w.value)}</span>`; }
+                else { leftHtml += escapeHtml(w.value); rightHtml += escapeHtml(w.value); }
+              });
+              rows.push({ left: leftHtml, right: rightHtml, type: 'changed' });
+            }
+            i++; // skip next
+          } else {
+            const remLines = part.value.split(/\r?\n/).filter(l=>l!=='');
+            remLines.forEach(l => rows.push({ left: escapeHtml(l), right: '', type: 'removed' }));
+          }
+        } else if (part.added) {
+          const addLines = part.value.split(/\r?\n/).filter(l=>l!=='');
+          addLines.forEach(l => rows.push({ left: '', right: escapeHtml(l), type: 'added' }));
+        } else {
+          const ctxLines = part.value.split(/\r?\n/).filter(l=>l!=='');
+          ctxLines.forEach(l => rows.push({ left: escapeHtml(l), right: escapeHtml(l), type: 'context' }));
+        }
+      }
+      // render rows
+      let html = '<div class="sbs-container">';
+      rows.forEach(r => {
+        html += `<div class="sbs-row"><div class="sbs-left ${r.type==='context'?'sbs-line-ctx':''}">${r.left||''}</div><div class="sbs-right ${r.type==='context'?'sbs-line-ctx':''}">${r.right||''}</div></div>`;
+      });
+      html += '</div>';
+      return html;
+    }
+
+    // Build per-panel HTML for source and target panels embedding line-level and word-level highlights
+    function renderPanelsWithDiff(aText, bText) {
+      const a = aText || '';
+      const b = bText || '';
+      const parts = Diff.diffLines(a, b);
+      const leftLines = [];
+      const rightLines = [];
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (part.removed) {
+          const next = parts[i+1];
+          if (next && next.added) {
+            const remLines = part.value.split(/\r?\n/);
+            const addLines = next.value.split(/\r?\n/);
+            const max = Math.max(remLines.length, addLines.length);
+            for (let k=0;k<max;k++) {
+              const left = remLines[k] || '';
+              const right = addLines[k] || '';
+              // word-level diff
+              const wdiff = Diff.diffWordsWithSpace(left, right);
+              let leftHtml=''; let rightHtml='';
+              wdiff.forEach(w => {
+                if (w.added) { rightHtml += `<span class="diff-word-added">${escapeHtml(w.value)}</span>`; }
+                else if (w.removed) { leftHtml += `<span class="diff-word-removed">${escapeHtml(w.value)}</span>`; }
+                else { leftHtml += escapeHtml(w.value); rightHtml += escapeHtml(w.value); }
+              });
+              leftLines.push(`<div class="diff-line diff-removed">${leftHtml || '&nbsp;'}</div>`);
+              rightLines.push(`<div class="diff-line diff-added">${rightHtml || '&nbsp;'}</div>`);
+            }
+            i++; // skip next
+          } else {
+            const remLines = part.value.split(/\r?\n/);
+            remLines.forEach(l => leftLines.push(`<div class="diff-line diff-removed">${escapeHtml(l) || '&nbsp;'}</div>`));
+          }
+        } else if (part.added) {
+          const addLines = part.value.split(/\r?\n/);
+          addLines.forEach(l => rightLines.push(`<div class="diff-line diff-added">${escapeHtml(l) || '&nbsp;'}</div>`));
+        } else {
+          const ctxLines = part.value.split(/\r?\n/);
+          ctxLines.forEach(l => { const html = `<div class="diff-line diff-context">${escapeHtml(l) || '&nbsp;'}</div>`; leftLines.push(html); rightLines.push(html); });
+        }
+      }
+
+      // ensure same line count by padding with empty context lines
+      const maxLines = Math.max(leftLines.length, rightLines.length);
+      while (leftLines.length < maxLines) leftLines.push(`<div class="diff-line diff-context">&nbsp;</div>`);
+      while (rightLines.length < maxLines) rightLines.push(`<div class="diff-line diff-context">&nbsp;</div>`);
+
+      return { leftHtml: leftLines.join('\n'), rightHtml: rightLines.join('\n') };
+    }
+
+    // Helper to get the preferred diff view mode ('sbs' or 'single')
+    function getDiffViewMode() {
+      try { const v = localStorage.getItem('diffViewMode'); if (v === 'single' || v === 'sbs') return v; } catch(e) {}
+      return 'sbs'; // default to side-by-side
+    }
+
+    // Centralized inline diff render that respects user preference
+    function renderInlineDiff(aText, bText) {
+      const mode = getDiffViewMode();
+      if (mode === 'single') return renderDiffHtml(aText, bText);
+      return renderSideBySideDiff(aText, bText);
+    }
+
+    // --- Audit auth handling (client-side) ---
+    let auditAuthHeader = null;
+    function getAuditHeaders(extra) {
+      const h = Object.assign({}, extra || {});
+      if (auditAuthHeader) h['Authorization'] = auditAuthHeader;
+      return h;
+    }
+
+    document.getElementById('auditLogin').addEventListener('click', () => {
+      const u = document.getElementById('auditUser').value || '';
+      const p = document.getElementById('auditPass').value || '';
+      if (!u) return alert('Enter audit username');
+      auditAuthHeader = 'Basic ' + btoa(u + ':' + p);
+      try { localStorage.setItem('auditAuthHeader', auditAuthHeader); } catch(e) {}
+      // validate credentials immediately
+      validateAuditCredentials().then(ok => {
+        if (ok) alert('Audit credentials validated and stored'); else alert('Credentials set but validation failed (unauthorized)');
+      });
+    });
+
+    // restore from storage if present
+    try { const s = localStorage.getItem('auditAuthHeader'); if (s) auditAuthHeader = s; } catch(e) {}
+
+    // validate stored credentials on load (if any)
+    async function validateAuditCredentials() {
+      const statusEl = document.getElementById('auditStatus');
+      const controls = document.getElementById('auditControls');
+      if (!auditAuthHeader) {
+        if (statusEl) { statusEl.textContent = 'Not authenticated'; statusEl.style.color = '#b33'; }
+        if (controls) controls.style.display = 'none';
+        return false;
+      }
+      try {
+        const resp = await fetch('/audit', { method: 'GET', headers: getAuditHeaders() });
+        if (resp.ok) {
+          if (statusEl) { statusEl.textContent = 'Authenticated'; statusEl.style.color = '#2a8f2a'; }
+          if (controls) controls.style.display = 'block';
+          return true;
+        } else {
+          if (statusEl) { statusEl.textContent = 'Auth failed'; statusEl.style.color = '#b33'; }
+          if (controls) controls.style.display = 'none';
+          return false;
+        }
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = 'Auth error'; statusEl.style.color = '#b33'; }
+        if (controls) controls.style.display = 'none';
+        return false;
+      }
+    }
+
+    document.getElementById('sendTestAudit').addEventListener('click', async () => {
+      const env = document.getElementById('auditEnv').value || 'DEV';
+      const action = document.getElementById('auditAction').value || 'test';
+      const payload = { env, action, user: (document.getElementById('metaUser').value||'ui-test'), timestamp: new Date().toISOString(), scriptPreview: 'Client test audit' };
+      try {
+        const resp = await fetch('/audit/log', { method: 'POST', headers: getAuditHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload) });
+        const j = await resp.json().catch(()=>null);
+        if (j && j.success) alert('Test audit posted'); else alert('Audit post failed: ' + (j? (j.message||JSON.stringify(j)) : resp.statusText));
+      } catch (err) { alert('Audit post error: ' + err.message); }
+    });
+
+      // Centralized viewer for objects (tables, views, procs, functions, triggers, indexes)
+      async function viewOnTarget(obj) {
+        const srcEnv = document.getElementById('srcEnv').value;
+        const tgtEnv = document.getElementById('tgtEnv').value;
+        const type = (obj.type || 'TABLE').toString().toUpperCase();
+        const schema = obj.schema || 'dbo';
+        const name = obj.name || obj.table || '';
+        if (!name) return alert('Object name missing');
+        const title = `${type} ${schema}.${name} — ${srcEnv} → ${tgtEnv}`;
+        document.getElementById('objectPreviewTitle').innerText = title;
+        const srcPre = document.getElementById('objectPreviewSource');
+        const tgtPre = document.getElementById('objectPreviewTarget');
+    srcPre.textContent = 'Loading...'; tgtPre.textContent = 'Loading...'; srcPre.dataset.raw = ''; tgtPre.dataset.raw = '';
+        document.getElementById('objectPreviewModal').style.display = 'block';
+            try {
+              const qSrc = `/db/object?env=${encodeURIComponent(srcEnv)}&type=${encodeURIComponent(type)}&schema=${encodeURIComponent(schema)}&name=${encodeURIComponent(name)}${type==='INDEX'?('&table='+encodeURIComponent(obj.table||name)):''}`;
+              const respSrc = await fetch(qSrc);
+              const jSrc = await respSrc.json();
+              if (!jSrc.success) { srcPre.textContent = 'Error: ' + (jSrc.message || JSON.stringify(jSrc)); } else { const raw = (jSrc.create || jSrc.definition || '') + '\n\n' + (jSrc.extras || ''); srcPre.dataset.raw = raw; srcPre.textContent = raw; }
+            } catch (e) { srcPre.textContent = 'Error: ' + e.message; }
+        try {
+          const qTgt = `/db/object?env=${encodeURIComponent(tgtEnv)}&type=${encodeURIComponent(type)}&schema=${encodeURIComponent(schema)}&name=${encodeURIComponent(name)}${type==='INDEX'?('&table='+encodeURIComponent(obj.table||name)):''}`;
+          const respTgt = await fetch(qTgt);
+          const jTgt = await respTgt.json();
+          if (!jTgt.success) { tgtPre.textContent = 'Error: ' + (jTgt.message || JSON.stringify(jTgt)); } else { const raw = (jTgt.create || jTgt.definition || '') + '\n\n' + (jTgt.extras || ''); tgtPre.dataset.raw = raw; tgtPre.textContent = raw; }
+        } catch (e) { tgtPre.textContent = 'Error: ' + e.message; }
+
+    // render combined a/b values and embed diff lines into the Source/Target PRE panels
+    const aText = srcPre.dataset.raw || srcPre.textContent || '';
+    const bText = tgtPre.dataset.raw || tgtPre.textContent || '';
+    // wire export buttons (use raw stored script when available)
+    document.getElementById('exportSourceBtn').onclick = () => downloadFile(`${schema}.${name}-${srcEnv}.sql`, srcPre.dataset.raw || srcPre.textContent || '');
+    document.getElementById('exportTargetBtn').onclick = () => downloadFile(`${schema}.${name}-${tgtEnv}.sql`, tgtPre.dataset.raw || tgtPre.textContent || '');
+
+    try {
+      const panels = renderPanelsWithDiff(aText, bText);
+      srcPre.innerHTML = panels.leftHtml;
+      tgtPre.innerHTML = panels.rightHtml;
+    } catch (e) { console.warn('panel diff render failed', e); }
+      }
+
+      function renderSampleTable(container, rows) {
+        if (!rows || !rows.length) return;
+        const table = document.createElement('table'); table.style.width='100%'; table.style.borderCollapse='collapse';
+        const hdr = document.createElement('tr'); Object.keys(rows[0]).forEach(k=>{ const th=document.createElement('th'); th.innerText=k; th.style.border='1px solid #eee'; th.style.padding='4px'; hdr.appendChild(th); }); table.appendChild(hdr);
+        rows.forEach(r=>{ const tr=document.createElement('tr'); Object.values(r).forEach(v=>{ const td=document.createElement('td'); td.innerText = v===null? 'NULL' : String(v); td.style.border='1px solid #f7f7f7'; td.style.padding='4px'; tr.appendChild(td); }); table.appendChild(tr); });
+        container.appendChild(table);
+      }
+
+    async function connectSQL(env) {
+      // normalize environment keys to server-side keys (DEV/TEST/LIVE)
+      const map = { 'dev': 'DEV', 'test': 'TEST', 'live': 'LIVE' };
+      const key = (env || '').toString().toLowerCase();
+      const mapped = map[key] || (env || '').toString().toUpperCase();
+      const resp = await fetch('/sql-connect/' + mapped);
+      // handle non-JSON error bodies gracefully
+      const json = await resp.json().catch(async () => ({ success: false, message: await resp.text() }));
+      alert(json.success ? json.message : ('Connection Failed: ' + (json.message || json.error || 'Unknown')));
+      if (json.success) {
+        setConnectedButton(mapped);
+        // refresh object list for the current source environment after connecting
+        try { setTimeout(() => { try { loadObjects(); } catch(e){} }, 200); } catch(e){}
+      }
+    }
+
+    function setConnectedButton(envKey) {
+      // reset dots and hide disconnect buttons
+      const dots = { dev: document.getElementById('dotDev'), test: document.getElementById('dotStage'), live: document.getElementById('dotProd') };
+      const disc = { dev: document.getElementById('btnDevDisconnect'), test: document.getElementById('btnStageDisconnect'), live: document.getElementById('btnProdDisconnect') };
+      Object.values(dots).forEach(d => { if (d) d.classList.remove('green'); });
+      Object.values(disc).forEach(b => { if (b) b.classList.remove('show'); });
+      // normalize and set connected indicator for the active one
+      const k = (envKey || '').toString().toLowerCase();
+      if (k === 'dev' && dots.dev) { dots.dev.classList.add('green'); if (disc.dev) disc.dev.classList.add('show'); }
+      if (k === 'test' && dots.test) { dots.test.classList.add('green'); if (disc.test) disc.test.classList.add('show'); }
+      if (k === 'live' && dots.live) { dots.live.classList.add('green'); if (disc.live) disc.live.classList.add('show'); }
+    }
+
+    async function disconnect(envKey) {
+      try {
+        const key = (envKey || '').toString().toUpperCase();
+        const resp = await fetch('/sql-disconnect/' + key, { method: 'POST' });
+        const json = await resp.json();
+        if (json.success) {
+          setConnectedButton(null);
+          alert(json.message || ('Disconnected from ' + key));
+        } else {
+          alert('Disconnect failed: ' + (json.message || 'Unknown'));
+        }
+      } catch (e) {
+        alert('Disconnect error: ' + e.message);
+      }
+    }
+
+      function updateEnvHighlight() {
+        const env = document.getElementById('env').value.toLowerCase();
+        document.getElementById('btnDev').classList.remove('btn-active');
+        document.getElementById('btnStage').classList.remove('btn-active');
+        document.getElementById('btnProd').classList.remove('btn-active');
+  if (env === 'dev') document.getElementById('btnDev').classList.add('btn-active');
+  if (env === 'test') document.getElementById('btnStage').classList.add('btn-active');
+  if (env === 'live') document.getElementById('btnProd').classList.add('btn-active');
+        // Auto-trigger connect for the selected environment (map UI values to server keys)
+  const map = { 'dev': 'DEV', 'test': 'TEST', 'live': 'LIVE' };
+        const sel = document.getElementById('env').value.toLowerCase();
+        const mapped = map[sel] || document.getElementById('env').value;
+        // call connectSQL but don't block UI
+        // reset labels
+        setConnectedButton(null);
+        setTimeout(() => { try { connectSQL(mapped); } catch(e) { /* ignore */ } }, 50);
+      }
+
+      document.getElementById('env').addEventListener('change', updateEnvHighlight);
+
+    document.getElementById('execute').addEventListener('click', async () => {
+      const btn = document.getElementById('execute');
+      btn.disabled = true;
+      document.getElementById('inlineStatus').textContent = 'Running...';
+      try {
+        const env = document.getElementById('env').value;
+        const script = document.getElementById('script').value.trim();
+        if (!script) { alert('Please enter a SQL script'); return; }
+        const resp = await fetch('/execute-sql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script }) });
+        const json = await resp.json();
+        if (!json.success) {
+          renderResult({ error: json.message });
+          renderInlineResult({ success:false, error: json.message || 'Error' });
+        } else {
+          renderResult({ rowsAffected: json.rowsAffected, recordset: json.recordset });
+          renderInlineResult({ success:true, recordset: json.recordset });
+        }
+      } catch (err) {
+        renderResult({ error: err.message });
+      } finally { btn.disabled = false; document.getElementById('inlineStatus').textContent = ''; }
+    });
+
+    // Scripts list and run
+    async function loadScripts() {
+      const sel = document.getElementById('scriptFileSelect');
+      sel.innerHTML = '<option>Loading...</option>';
+      try {
+        const resp = await fetch('/scripts');
+        const json = await resp.json();
+        if (!json.success) { sel.innerHTML = '<option>Error</option>'; renderResult({ error: json.message }); return; }
+        sel.innerHTML = '';
+        if (json.scripts.length === 0) sel.innerHTML = '<option>(no scripts)</option>';
+        json.scripts.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o); });
+      } catch (err) {
+        sel.innerHTML = '<option>Error</option>';
+        renderResult({ error: err.message });
+      }
+    }
+
+    document.getElementById('refreshScripts').addEventListener('click', loadScripts);
+    document.getElementById('runScript').addEventListener('click', async () => {
+      const sel = document.getElementById('scriptFileSelect');
+      const filename = sel.value; const env = document.getElementById('env').value;
+      if (!filename || filename === '(no scripts)') return alert('No script selected');
+      try {
+        const resp = await fetch('/run-script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, filename }) });
+        const json = await resp.json();
+        if (!json.success) { renderResult({ error: json.message }); renderInlineResult({ success:false, error: json.message }); }
+        else { renderResult({ rowsAffected: json.rowsAffected, recordset: json.recordset }); renderInlineResult({ success:true, recordset: json.recordset }); }
+      } catch (err) { renderResult({ error: err.message }); renderInlineResult({ success:false, error: err.message }); }
+    });
+
+    // dbatools UI removed - server-side endpoint '/ps/run-script' remains but UI no longer exposes it
+
+    // Preview plan: fetch script content, call /ddl/plan, then dry-run apply for validation
+    document.getElementById('previewPlan').addEventListener('click', async () => {
+      const sel = document.getElementById('scriptFileSelect');
+      const filename = sel.value; const env = document.getElementById('env').value;
+      if (!filename || filename === '(no scripts)') return alert('No script selected');
+      try {
+        // fetch file content
+        const respFile = await fetch('/scripts/content?filename=' + encodeURIComponent(filename));
+        const fileJson = await respFile.json();
+        if (!fileJson.success) return renderResult({ error: fileJson.message });
+        const script = fileJson.content;
+
+        // get plan
+        const respPlan = await fetch('/ddl/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script }) });
+        const planJson = await respPlan.json();
+        if (!planJson.success) return renderResult({ error: planJson.message });
+
+        // show plan in planPreview
+        const planDiv = document.getElementById('planPreview');
+        planDiv.innerHTML = '';
+        planJson.plans.forEach(p => {
+          const card = document.createElement('div');
+          card.style.padding = '8px'; card.style.border = '1px solid #eee'; card.style.marginBottom = '8px';
+          card.innerHTML = `<strong>${p.schema}.${p.table}</strong><pre style="white-space:pre-wrap">Implementation:\n${p.implementation}\n\nRollback:\n${p.rollback}\n\nNotes:\n${(p.notes||[]).join('\n')}</pre>`;
+          planDiv.appendChild(card);
+        });
+
+        // build combined implementation script and dry-run validate
+        const combined = planJson.plans.map(p => p.implementation).join('\n\n');
+        const combinedRollback = planJson.plans.map(p => p.rollback).reverse().join('\n\n');
+        if (!combined.trim()) { planDiv.appendChild(document.createElement('div')).textContent = 'No implementation to validate'; return; }
+
+        const respValidate = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script: combined }) });
+        const valJson = await respValidate.json();
+        const resBlock = document.createElement('div'); resBlock.style.marginTop = '8px';
+        if (valJson.success) {
+          resBlock.innerHTML = `<div style="color:green">Validation succeeded (dry-run). You may apply the implementation.</div>`;
+          // add Apply button
+          const applyBtn = document.createElement('button'); applyBtn.textContent = 'Apply Implementation'; applyBtn.style.marginTop = '8px';
+          applyBtn.addEventListener('click', async () => {
+            if (!confirm('Apply implementation to ' + env + '? This will execute DDL changes.')) return;
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const respApply = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combined }, meta)) });
+            const appJson = await respApply.json();
+            if (appJson.success) { resBlock.innerHTML = '<div style="color:green">Apply succeeded</div>'; } else { resBlock.innerHTML = '<div style="color:red">Apply failed: '+(appJson.message||'')+'</div>'; }
+          });
+          resBlock.appendChild(applyBtn);
+
+          // Show rollback script and add Execute Rollback button
+          const rbHeader = document.createElement('div'); rbHeader.style.marginTop = '10px'; rbHeader.innerHTML = '<strong>Rollback Script</strong>';
+          const rbPre = document.createElement('pre'); rbPre.style.whiteSpace = 'pre-wrap'; rbPre.textContent = combinedRollback || '-- No rollback script generated';
+          resBlock.appendChild(rbHeader);
+          resBlock.appendChild(rbPre);
+
+          const validateRbBtn = document.createElement('button'); validateRbBtn.textContent = 'Validate Rollback (dry-run)'; validateRbBtn.style.marginTop = '8px';
+          validateRbBtn.addEventListener('click', async () => {
+            validateRbBtn.disabled = true;
+            try {
+              const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+              const respVal = await fetch('/ddl/rollback?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combinedRollback }, meta)) });
+              const valJson = await respVal.json();
+              if (valJson.success) {
+                alert('Rollback validation succeeded (dry-run).');
+              } else {
+                alert('Rollback validation failed: ' + (valJson.message || JSON.stringify(valJson)));
+              }
+            } catch (err) {
+              alert('Validation error: ' + err.message);
+            } finally { validateRbBtn.disabled = false; }
+          });
+          resBlock.appendChild(validateRbBtn);
+
+          const rollbackBtn = document.createElement('button'); rollbackBtn.textContent = 'Execute Rollback'; rollbackBtn.style.marginTop = '8px'; rollbackBtn.style.marginLeft = '8px';
+          rollbackBtn.addEventListener('click', async () => {
+            if (!confirm('Execute rollback on ' + env + '? This will attempt to revert applied changes.')) return;
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const respRb = await fetch('/ddl/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combinedRollback }, meta)) });
+            const rbJson = await respRb.json();
+            if (rbJson.success) { resBlock.innerHTML = '<div style="color:green">Rollback executed successfully</div>'; } else { resBlock.innerHTML = '<div style="color:red">Rollback failed: '+(rbJson.message||'')+'</div>'; }
+          });
+          resBlock.appendChild(rollbackBtn);
+        } else {
+          resBlock.innerHTML = `<div style="color:red">Validation failed: ${valJson.message || JSON.stringify(valJson)}</div>`;
+        }
+        planDiv.appendChild(resBlock);
+
+      } catch (err) { renderResult({ error: err.message }); }
+    });
+
+    // Upload & execute (reads file client-side and posts script to execute-sql)
+    document.getElementById('uploadExecute').addEventListener('click', () => {
+      const fileInput = document.getElementById('sqlFile');
+      const env = document.getElementById('env').value;
+      if (!fileInput || !fileInput.files.length) return alert('Please select a SQL file');
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const script = e.target.result;
+        try {
+          const resp = await fetch('/execute-sql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script }) });
+          const json = await resp.json();
+          if (!json.success) { renderResult({ error: json.message }); renderInlineResult({ success:false, error: json.message }); } else { renderResult({ rowsAffected: json.rowsAffected, recordset: json.recordset }); renderInlineResult({ success:true, recordset: json.recordset }); }
+        } catch (err) { renderResult({ error: err.message }); renderInlineResult({ success:false, error: err.message }); }
+      };
+      reader.readAsText(fileInput.files[0]);
+    });
+
+    // GIT push
+    document.getElementById('gitPush').addEventListener('click', async () => {
+      const msg = document.getElementById('commitMessage').value || 'Update from UI';
+      try {
+        const resp = await fetch('/git-update', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message: msg }) });
+        const json = await resp.json();
+        alert(json.success ? 'GIT Push Successful!' : ('GIT Push Failed: ' + (json.stderr || json.message || 'Unknown')));
+      } catch (err) { alert('GIT Push Failed: ' + err.message); }
+    });
+
+    // Git remotes management
+    async function loadRemotes() {
+      const sel = document.getElementById('remotesSelect'); sel.innerHTML = '<option>Loading...</option>';
+      try {
+        const resp = await fetch('/git/remotes');
+        const json = await resp.json();
+        if (!json.success) { sel.innerHTML = '<option>Error</option>'; renderResult({ error: json.message }); return; }
+        sel.innerHTML = '';
+        if (!json.remotes || !json.remotes.length) sel.innerHTML = '<option>(no remotes)</option>';
+        (json.remotes || []).forEach(r => { const o = document.createElement('option'); o.value = r.name; o.textContent = `${r.name} -> ${r.url || '(no url)'}`; sel.appendChild(o); });
+      } catch (err) { sel.innerHTML = '<option>Error</option>'; renderResult({ error: err.message }); }
+    }
+
+    document.getElementById('refreshRemotes').addEventListener('click', loadRemotes);
+    document.getElementById('addRemote').addEventListener('click', async () => {
+      const name = document.getElementById('newRemoteName').value.trim();
+      const url = document.getElementById('newRemoteUrl').value.trim();
+      if (!name || !url) return alert('name and url required');
+      try {
+        const resp = await fetch('/git/remote/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) });
+        const json = await resp.json();
+        if (!json.success) renderResult({ error: json.message }); else { renderResult({ message: 'Added' }); loadRemotes(); }
+      } catch (err) { renderResult({ error: err.message }); }
+    });
+
+    document.getElementById('setUrlRemote').addEventListener('click', async () => {
+      const name = document.getElementById('newRemoteName').value.trim();
+      const url = document.getElementById('newRemoteUrl').value.trim();
+      if (!name || !url) return alert('name and url required');
+      try {
+        const resp = await fetch('/git/remote/set-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) });
+        const json = await resp.json();
+        if (!json.success) renderResult({ error: json.message }); else { renderResult({ message: 'URL updated' }); loadRemotes(); }
+      } catch (err) { renderResult({ error: err.message }); }
+    });
+
+    document.getElementById('removeRemote').addEventListener('click', async () => {
+      const sel = document.getElementById('remotesSelect'); const name = sel.value;
+      if (!name || name === '(no remotes)') return alert('No remote selected');
+      if (!confirm(`Remove remote ${name}?`)) return;
+      try {
+        const resp = await fetch('/git/remote/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        const json = await resp.json();
+        if (!json.success) renderResult({ error: json.message }); else { renderResult({ message: 'Removed' }); loadRemotes(); }
+      } catch (err) { renderResult({ error: err.message }); }
+    });
+
+    // load remotes on init
+    loadRemotes();
+
+    // Audit viewer
+    const _viewAuditBtn = document.getElementById('viewAudit');
+    if (_viewAuditBtn) _viewAuditBtn.addEventListener('click', async () => {
+      const av = document.getElementById('auditView');
+      av.style.display = 'block';
+      av.innerHTML = 'Loading...';
+      try {
+        const resp = await fetch('/audit', { headers: getAuditHeaders() });
+        const json = await resp.json();
+        if (!json.success) { av.innerHTML = '<pre>' + JSON.stringify(json, null, 2) + '</pre>'; return; }
+        if (!json.entries || !json.entries.length) { av.innerHTML = '<em>No audit entries</em>'; return; }
+        const html = json.entries.map(e => '<div style="padding:8px;border-bottom:1px solid #f3f3f3"><strong>' + (e.action||e.raw||'') + ' @ ' + (e.timestamp||'') + '</strong><div style="font-family:monospace;margin-top:6px">' + (e.scriptPreview? ('<pre style="white-space:pre-wrap;max-height:120px;overflow:auto">'+(e.scriptPreview)+'</pre>') : '') + '<div>' + (e.error?('<span style="color:red">Error: '+ String(e.error) +'</span>'):'') + '</div></div></div>' ).join('');
+        av.innerHTML = html;
+      } catch (err) {
+        av.innerHTML = '<pre>' + err.message + '</pre>';
+      }
+    });
+
+    // Initialize modal close bindings so we can reliably remove and rebind the modal
+    function initModalCloseBindings() {
+      const modal = document.getElementById('objectPreviewModal');
+      if (!modal) return;
+      const closeBtn = document.getElementById('closeObjectPreview');
+      const compactToggle = document.getElementById('modalCompactToggle');
+
+      // apply stored compact preference and update toggle label
+      try {
+        const pref = localStorage.getItem('modalCompact') || 'false';
+        if (pref === 'true') {
+          modal.classList.add('modal-compact'); modal.classList.remove('modal-regular');
+          if (compactToggle) {
+            compactToggle.textContent = 'Compact: On';
+            compactToggle.classList.remove('compact-off'); compactToggle.classList.add('compact-on');
+            compactToggle.style.backgroundColor = '#2a8f2a'; compactToggle.style.color = '#fff'; compactToggle.style.border = '1px solid rgba(0,0,0,0.06)';
+          }
+        } else {
+          modal.classList.add('modal-regular'); modal.classList.remove('modal-compact');
+          if (compactToggle) {
+            compactToggle.textContent = 'Compact: Off';
+            compactToggle.classList.remove('compact-on'); compactToggle.classList.add('compact-off');
+            compactToggle.style.backgroundColor = '#f2f2f2'; compactToggle.style.color = '#222'; compactToggle.style.border = '1px solid #e0e0e0';
+          }
+        }
+      } catch(e) {}
+
+      // view preference still exists but we removed the inline view control
+
+      function doClose() {
+        try {
+          console.log('closeObjectPreview invoked');
+          modal.style.setProperty('display', 'none', 'important');
+          modal.setAttribute('aria-hidden', 'true');
+          modal.style.visibility = 'hidden';
+          modal.style.opacity = '0';
+          modal.style.pointerEvents = 'none';
+          modal.classList.remove('open');
+          const ids = ['objectPreviewSource','objectPreviewTarget'];
+          ids.forEach(id => { const el = document.getElementById(id); if (el) { if (el.tagName === 'PRE') el.textContent = ''; else el.innerHTML = ''; } });
+        } catch (e) { console.error('closeObjectPreview error', e); }
+        try {
+          const t = document.createElement('div'); t.textContent = 'Preview closed'; t.style.position='fixed'; t.style.bottom='18px'; t.style.right='18px'; t.style.background='#222'; t.style.color='white'; t.style.padding='8px 12px'; t.style.borderRadius='6px'; t.style.zIndex=99999; document.body.appendChild(t);
+          setTimeout(()=>{ try{ t.style.transition='opacity 300ms'; t.style.opacity='0'; setTimeout(()=>t.remove(),350); }catch(e){} }, 900);
+        } catch(e){}
+
+        // If still visible after a short delay, remove and save HTML for reinsertion
+        setTimeout(() => {
+          try {
+            const cs = window.getComputedStyle(modal);
+            if (cs && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') {
+              try { window._savedModalHtml = modal.outerHTML; modal.remove(); window._modalRemoved = true; console.warn('Modal removed from DOM for recovery'); } catch (e) { console.error('Failed to remove modal', e); }
+            }
+          } catch(e){}
+        }, 120);
+      }
+
+      window.closeObjectPreview = doClose;
+      if (closeBtn) { try { closeBtn.removeEventListener('click', doClose); } catch(e){}; closeBtn.addEventListener('click', doClose); }
+      // compact toggle handler
+      if (compactToggle) {
+        try { compactToggle.removeEventListener('click', compactToggle._handler || (()=>{})); } catch(e){}
+        compactToggle._handler = () => {
+          try {
+            const isCompact = modal.classList.toggle('modal-compact');
+            if (isCompact) {
+              modal.classList.remove('modal-regular');
+              compactToggle.textContent = 'Compact: On';
+              compactToggle.classList.remove('compact-off'); compactToggle.classList.add('compact-on');
+              compactToggle.style.backgroundColor = '#2a8f2a'; compactToggle.style.color = '#fff'; compactToggle.style.border = '1px solid rgba(0,0,0,0.06)';
+            } else {
+              modal.classList.add('modal-regular');
+              compactToggle.textContent = 'Compact: Off';
+              compactToggle.classList.remove('compact-on'); compactToggle.classList.add('compact-off');
+              compactToggle.style.backgroundColor = '#f2f2f2'; compactToggle.style.color = '#222'; compactToggle.style.border = '1px solid #e0e0e0';
+            }
+            localStorage.setItem('modalCompact', isCompact ? 'true' : 'false');
+          } catch(e) { console.warn('compact toggle fail', e); }
+        };
+        compactToggle.addEventListener('click', compactToggle._handler);
+      }
+      // overlay click
+      try { modal.removeEventListener('click', modal._overlayHandler || (()=>{})); } catch(e) {}
+      modal._overlayHandler = (ev) => { if (ev.target === modal) doClose(); };
+      modal.addEventListener('click', modal._overlayHandler);
+      // synchronized scrolling between source/target preview panes
+      try {
+        const srcPre = document.getElementById('objectPreviewSource');
+        const tgtPre = document.getElementById('objectPreviewTarget');
+        if (srcPre && tgtPre) {
+          // prevent recursive scroll events
+          let _syncingScroll = false;
+          // remove previous handlers if present
+          try { srcPre.removeEventListener('scroll', srcPre._syncHandler || (()=>{})); } catch(e) {}
+          try { tgtPre.removeEventListener('scroll', tgtPre._syncHandler || (()=>{})); } catch(e) {}
+
+          srcPre._syncHandler = function() {
+            if (_syncingScroll) return;
+            _syncingScroll = true;
+            try { tgtPre.scrollTop = srcPre.scrollTop; tgtPre.scrollLeft = srcPre.scrollLeft; } catch(e){}
+            // small timeout to allow other handlers to run before releasing
+            setTimeout(() => { _syncingScroll = false; }, 20);
+          };
+          tgtPre._syncHandler = function() {
+            if (_syncingScroll) return;
+            _syncingScroll = true;
+            try { srcPre.scrollTop = tgtPre.scrollTop; srcPre.scrollLeft = tgtPre.scrollLeft; } catch(e){}
+            setTimeout(() => { _syncingScroll = false; }, 20);
+          };
+          srcPre.addEventListener('scroll', srcPre._syncHandler);
+          tgtPre.addEventListener('scroll', tgtPre._syncHandler);
+        }
+      } catch(e) { console.warn('sync scroll setup failed', e); }
+      // escape key (single handler)
+      if (!document._hasModalKeyHandler) { document._hasModalKeyHandler = true; document.addEventListener('keydown', (ev) => { if ((ev.key === 'Escape' || ev.key === 'Esc') && document.getElementById('objectPreviewModal')) { doClose(); } }); }
+    }
+    // initialize modal bindings
+    initModalCloseBindings();
+
+    // Ensure modal gets focus when opened for keyboard handlers to work and re-insert if removed
+    const _origViewOnTarget = viewOnTarget;
+    viewOnTarget = async function(obj) {
+      // if modal was removed previously, reinsert saved HTML
+      if (!document.getElementById('objectPreviewModal') && window._savedModalHtml) {
+        try {
+          const wrapper = document.createElement('div'); wrapper.innerHTML = window._savedModalHtml; document.body.appendChild(wrapper.firstElementChild);
+          window._modalRemoved = false;
+          initModalCloseBindings();
+        } catch (e) { console.error('Failed to reinsert saved modal HTML', e); }
+      }
+      await _origViewOnTarget(obj);
+      try {
+        const modal = document.getElementById('objectPreviewModal');
+        if (modal) {
+          // ensure a sizing class exists (default to regular)
+          if (!modal.classList.contains('modal-regular') && !modal.classList.contains('modal-compact')) {
+            modal.classList.add('modal-regular');
+          }
+          // force-assert visible state in case inline styles or previous close left it hidden
+          try {
+            modal.style.setProperty('display', 'block', 'important');
+            modal.removeAttribute('aria-hidden');
+            modal.style.visibility = '';
+            modal.style.opacity = '1';
+            modal.style.pointerEvents = 'auto';
+          } catch(e) { /* best-effort */ }
+          // ensure bindings are present (re-init in case modal was reinserted)
+          try { initModalCloseBindings(); } catch(e) {}
+          modal.setAttribute('tabindex', '-1'); modal.focus();
+        }
+      } catch (e) { /* ignore */ }
+    };
+
+    // Object migration UI handlers
+    async function loadObjects() {
+      const src = document.getElementById('srcEnv').value;
+      const includeSys = !!document.getElementById('includeSystemObjects').checked;
+      const container = document.getElementById('objectList');
+      container.innerHTML = 'Loading...';
+      try {
+        const resp = await fetch('/db/objects?env=' + encodeURIComponent(src) + (includeSys ? '&includeSystem=true' : ''));
+        const json = await resp.json();
+        if (!json.success) { container.innerHTML = 'Error: ' + json.message; return; }
+        // cache the objects for client-side filtering
+        window._cachedObjects = json.objects || [];
+        if (!window._cachedObjects || !window._cachedObjects.length) {
+          // if nothing and includeSys not requested, offer a retry
+          if (!includeSys) {
+            container.innerHTML = '<em>No objects. Try <a href="#" id="retryIncludeSys">including system objects</a></em>';
+            setTimeout(() => { const a = document.getElementById('retryIncludeSys'); if (!a) return; a.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('includeSystemObjects').checked = true; loadObjects(); }); }, 20);
+            return;
+          }
+          container.innerHTML = '<em>No objects</em>'; return;
+        }
+        // render from cache (this will show all objects when filter is empty)
+        renderObjects();
+      } catch (err) { container.innerHTML = 'Error: ' + err.message; }
+    }
+
+    document.getElementById('refreshObjects').addEventListener('click', loadObjects);
+
+    // Select All / Clear Selection handlers for object list
+    document.getElementById('selectAllObjects').addEventListener('click', () => {
+      const inputs = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]'));
+      if (!inputs.length) return alert('No objects loaded to select');
+      inputs.forEach(i => { i.checked = true; });
+    });
+    document.getElementById('clearAllObjects').addEventListener('click', () => {
+      const inputs = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]'));
+      if (!inputs.length) return; inputs.forEach(i => { i.checked = false; });
+    });
+
+    // Render objects from cache, optional filter function or query string
+    function renderObjects(filter) {
+      const container = document.getElementById('objectList');
+      const objs = window._cachedObjects || [];
+      container.innerHTML = '';
+      const query = typeof filter === 'string' ? filter.trim().toLowerCase() : null;
+      const filtered = objs.filter(o => {
+        if (!query) return true;
+        const objName = (o.name || o.table || '').toString().toLowerCase();
+        const schema = (o.schema || '').toString().toLowerCase();
+        const type = (o.type || '').toString().toLowerCase();
+        // match schema.name, name, type
+        if ((schema + '.' + objName).includes(query)) return true;
+        if (objName.includes(query)) return true;
+        if (type.includes(query)) return true;
+        return false;
+      });
+      if (!filtered.length) { container.innerHTML = '<em>No objects match</em>'; return; }
+      filtered.forEach(o => {
+        const objName = o.name || o.table || '';
+        const id = 'obj_' + o.type + '_' + o.schema + '_' + objName;
+        const div = document.createElement('div');
+        const viewBtnId = 'view_' + id;
+        const displayName = (o.type ? (o.type + ' ') : '') + `${o.schema}.${objName}`;
+        div.innerHTML = `<label style="margin-right:8px"><input type="checkbox" data-type="${o.type}" data-schema="${o.schema}" data-name="${objName}" /> ${escapeHtml(displayName)}</label> <button id="${viewBtnId}" style="margin-left:6px;padding:4px 8px">View on Target</button>`;
+        container.appendChild(div);
+        // attach view handler
+        setTimeout(() => {
+          const vb = document.getElementById(viewBtnId);
+          if (!vb) return;
+          vb.addEventListener('click', async () => {
+            const checked = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]')).filter(i => i.checked);
+            if (checked.length > 1) { viewSelectedOnTarget(); return; }
+            viewOnTarget({ type: (o.type||'TABLE'), schema: o.schema, name: objName, table: o.table || objName });
+          });
+        }, 10);
+      });
+    }
+
+    // Search UI handlers - ensure objects are loaded into cache before attempting a client-side filter
+    document.getElementById('objectSearchBtn').addEventListener('click', async () => {
+      // if cache is empty, try to load objects first (user may not have clicked Refresh yet)
+      if (!window._cachedObjects || !window._cachedObjects.length) {
+        document.getElementById('objectList').innerHTML = 'Loading objects for search...';
+        await loadObjects();
+      }
+      const q = document.getElementById('objectSearchInput').value || '';
+      renderObjects(q);
+    });
+
+    document.getElementById('clearObjectSearch').addEventListener('click', async () => {
+      document.getElementById('objectSearchInput').value = '';
+      if (!window._cachedObjects || !window._cachedObjects.length) {
+        document.getElementById('objectList').innerHTML = 'Loading objects...';
+        await loadObjects();
+      }
+      renderObjects('');
+    });
+
+    // Enter key on search input triggers search (async to allow auto-load)
+    document.getElementById('objectSearchInput').addEventListener('keydown', async (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); await document.getElementById('objectSearchBtn').click(); } });
+
+    // View multiple selected objects in the modal and compare source -> target
+    async function viewSelectedOnTarget() {
+      const checkboxes = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]')).filter(i => i.checked);
+      if (!checkboxes.length) return alert('Select at least one object');
+      const srcEnv = document.getElementById('srcEnv').value;
+      const tgtEnv = document.getElementById('tgtEnv').value;
+      // build list of object descriptors
+      const objects = checkboxes.map(i => ({ type: (i.dataset.type||'TABLE').toString().toUpperCase(), schema: i.dataset.schema, name: i.dataset.name }));
+      // prepare combined raw strings
+      let combinedSrc = '';
+      let combinedTgt = '';
+      const titleParts = [];
+      // show modal immediately
+      document.getElementById('objectPreviewTitle').innerText = `Multiple Objects — ${srcEnv} → ${tgtEnv}`;
+      const srcPre = document.getElementById('objectPreviewSource');
+      const tgtPre = document.getElementById('objectPreviewTarget');
+      srcPre.textContent = 'Loading...'; tgtPre.textContent = 'Loading...'; srcPre.dataset.raw = ''; tgtPre.dataset.raw = '';
+      document.getElementById('objectPreviewModal').style.display = 'block';
+      for (let obj of objects) {
+        const type = obj.type || 'TABLE'; const schema = obj.schema || 'dbo'; const name = obj.name || '';
+        titleParts.push(`${type} ${schema}.${name}`);
+        try {
+          const qSrc = `/db/object?env=${encodeURIComponent(srcEnv)}&type=${encodeURIComponent(type)}&schema=${encodeURIComponent(schema)}&name=${encodeURIComponent(name)}${type==='INDEX'?('&table='+encodeURIComponent(obj.table||name)):''}`;
+          const respSrc = await fetch(qSrc);
+          const jSrc = await respSrc.json().catch(()=>({ success:false, message: 'Invalid JSON' }));
+          const rawSrc = jSrc && jSrc.success ? ((jSrc.create || jSrc.definition || '') + '\n\n' + (jSrc.extras || '')) : (`-- Error fetching ${schema}.${name} from ${srcEnv}: ${jSrc && jSrc.message ? jSrc.message : 'Unknown'}`);
+          combinedSrc += `-- ==== ${type} ${schema}.${name} (${srcEnv}) ====\n` + rawSrc + '\n\n';
+        } catch (e) { combinedSrc += `-- ==== ${obj.type} ${obj.schema}.${obj.name} (${srcEnv}) ====\n-- Error: ${e.message}\n\n`; }
+        try {
+          const qTgt = `/db/object?env=${encodeURIComponent(tgtEnv)}&type=${encodeURIComponent(type)}&schema=${encodeURIComponent(schema)}&name=${encodeURIComponent(name)}${type==='INDEX'?('&table='+encodeURIComponent(obj.table||name)):''}`;
+          const respTgt = await fetch(qTgt);
+          const jTgt = await respTgt.json().catch(()=>({ success:false, message: 'Invalid JSON' }));
+          const rawTgt = jTgt && jTgt.success ? ((jTgt.create || jTgt.definition || '') + '\n\n' + (jTgt.extras || '')) : (`-- Error fetching ${schema}.${name} from ${tgtEnv}: ${jTgt && jTgt.message ? jTgt.message : 'Unknown'}`);
+          combinedTgt += `-- ==== ${type} ${schema}.${name} (${tgtEnv}) ====\n` + rawTgt + '\n\n';
+        } catch (e) { combinedTgt += `-- ==== ${obj.type} ${obj.schema}.${obj.name} (${tgtEnv}) ====\n-- Error: ${e.message}\n\n`; }
+      }
+
+      // set dataset.raw and render
+      srcPre.dataset.raw = combinedSrc; tgtPre.dataset.raw = combinedTgt;
+      srcPre.textContent = combinedSrc; tgtPre.textContent = combinedTgt;
+      document.getElementById('objectPreviewTitle').innerText = `${titleParts.length} objects — ${srcEnv} → ${tgtEnv}`;
+
+      // wire export buttons to download combined scripts
+      document.getElementById('exportSourceBtn').onclick = () => downloadFile(`combined-${srcEnv}.sql`, srcPre.dataset.raw || srcPre.textContent || '');
+      document.getElementById('exportTargetBtn').onclick = () => downloadFile(`combined-${tgtEnv}.sql`, tgtPre.dataset.raw || tgtPre.textContent || '');
+
+      // render panels for combined scripts
+      try {
+        const panels = renderPanelsWithDiff(combinedSrc, combinedTgt);
+        srcPre.innerHTML = panels.leftHtml;
+        tgtPre.innerHTML = panels.rightHtml;
+      } catch (e) { console.warn('panel diff render failed', e); }
+    }
+
+    document.getElementById('viewSelectedBtn').addEventListener('click', viewSelectedOnTarget);
+
+    document.getElementById('generateDiff').addEventListener('click', async () => {
+      const src = document.getElementById('srcEnv').value;
+      const tgt = document.getElementById('tgtEnv').value;
+      const checkboxes = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]')).filter(i => i.checked);
+      if (!checkboxes.length) return alert('Select at least one object');
+  const objects = checkboxes.map(i => ({ type: i.dataset.type || 'TABLE', schema: i.dataset.schema, name: i.dataset.name }));
+      const body = { fromEnv: src, toEnv: tgt, objects };
+      const planDiv = document.getElementById('migrationPlan');
+      planDiv.innerHTML = 'Generating diff...';
+      try {
+        const resp = await fetch('/ddl/diff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const json = await resp.json();
+        if (!json.success) { planDiv.innerHTML = '<pre>' + JSON.stringify(json, null, 2) + '</pre>'; return; }
+        // show plans
+        const htmlParts = [];
+        json.plans.forEach(p => {
+          const ds = p.diffSummary || { added: [], removed: [], altered: [] };
+          const dsHtml = `<div style="margin-top:6px;font-size:0.95em"><strong>Diff Summary:</strong><div>Added: ${ds.added && ds.added.length ? ds.added.join(', ') : '(none)'}</div><div>Removed: ${ds.removed && ds.removed.length ? ds.removed.join(', ') : '(none)'}</div><div>Altered: ${(ds.altered && ds.altered.length)? ds.altered.map(a=>a.column).join(', '): '(none)'}</div></div>`;
+          const displayName = `${p.schema}.${(p.name || p.table || '')}`;
+          htmlParts.push(`<div style="padding:8px;border-bottom:1px solid #f3f3f3"><strong>${displayName}</strong>${dsHtml}<pre style="white-space:pre-wrap">Implementation:\n${p.implementation || '--'}\n\nRollback:\n${p.rollback || '--'}\n\nNotes:\n${(p.notes||[]).join('\n')}</pre></div>`);
+        });
+  const applyOrderHtml = json.applyOrder && json.applyOrder.length ? `<div style="margin-bottom:8px"><strong>Apply Order:</strong> ${json.applyOrder.map(o=> ((o.type? o.type + ' ':'') + (o.schema||'') + '.' + (o.name||o.table||''))).join(' → ')}</div>` : '';
+  const combinedHtml = `${applyOrderHtml}<h4>Combined Implementation</h4><pre style="white-space:pre-wrap">${json.combinedImpl || '--'}</pre><h4>Combined Rollback</h4><pre style="white-space:pre-wrap">${json.combinedRollback || '--'}</pre>`;
+  planDiv.innerHTML = htmlParts.join('') + combinedHtml;
+
+        // add validate/apply/rollback controls
+        const controls = document.createElement('div'); controls.style.marginTop = '8px';
+        const validateBtn = document.createElement('button'); validateBtn.textContent = 'Validate Implementation (dry-run)';
+        validateBtn.addEventListener('click', async () => {
+          validateBtn.disabled = true;
+          try {
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const respVal = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl }, meta)) });
+            const vj = await respVal.json();
+            alert(vj.success ? 'Validation succeeded' : ('Validation failed: ' + (vj.message || JSON.stringify(vj))));
+          } catch (e) { alert('Validation error: ' + e.message); }
+          finally { validateBtn.disabled = false; }
+        });
+        controls.appendChild(validateBtn);
+
+        const applyBtn = document.createElement('button'); applyBtn.textContent = 'Apply Implementation to ' + tgt; applyBtn.style.marginLeft = '8px';
+        // element to show detailed status
+        const applyStatus = document.createElement('div'); applyStatus.style.marginTop = '8px';
+        applyBtn.addEventListener('click', async () => {
+          // require typed confirmation
+          const confirmToken = prompt('Type APPLY to confirm applying combined implementation to ' + tgt + ':');
+          if (!confirmToken || confirmToken.trim().toUpperCase() !== 'APPLY') { applyStatus.innerHTML = '<span style="color:#b21">Confirmation failed. Type APPLY to proceed.</span>'; return; }
+          applyBtn.disabled = true; applyStatus.innerHTML = 'Applying...';
+          try {
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const respA = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl }, meta)) });
+            // try parse as JSON, fall back to text
+            let bodyText = ''; let parsed = null;
+            try { parsed = await respA.json(); } catch (e) { bodyText = await respA.text(); }
+            console.log('Apply response', { status: respA.status, parsed, bodyText });
+            if (parsed && parsed.success) {
+              applyStatus.innerHTML = '<span style="color:green">Apply succeeded</span>';
+            } else {
+              const msg = parsed ? (parsed.message || JSON.stringify(parsed)) : bodyText || 'Unknown error';
+              applyStatus.innerHTML = `<div style="color:#b21"><strong>Apply failed</strong>: ${escapeHtml(String(msg))}</div>`;
+              // capture server error to audit table (best-effort)
+              try { postClientAudit({ env: tgt, action: 'apply', user: meta.user || 'ui', scriptPreview: (json.combinedImpl||'').slice(0,2000), error: msg, timestamp: new Date().toISOString() }); } catch(e) { console.warn('audit post failed', e); }
+            }
+          } catch (err) {
+            console.error('Apply error', err);
+            applyStatus.innerHTML = `<div style="color:#b21">Apply error: ${escapeHtml(err.message || String(err))}</div>`;
+            try { postClientAudit({ env: tgt, action: 'apply', user: document.getElementById('metaUser').value || 'ui', scriptPreview: (json.combinedImpl||'').slice(0,2000), error: err.message || String(err), timestamp: new Date().toISOString() }); } catch(e){}
+          } finally { applyBtn.disabled = false; }
+        });
+        controls.appendChild(applyBtn);
+        controls.appendChild(applyStatus);
+
+        const validateRb = document.createElement('button'); validateRb.textContent = 'Validate Rollback (dry-run)'; validateRb.style.marginLeft = '8px';
+        validateRb.addEventListener('click', async () => {
+          validateRb.disabled = true;
+          try {
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const resp = await fetch('/ddl/rollback?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedRollback }, meta)) });
+            const rj = await resp.json();
+            alert(rj.success ? 'Rollback validation succeeded' : ('Rollback validation failed: ' + (rj.message || JSON.stringify(rj))));
+          } catch (e) { alert('Validation error: ' + e.message); }
+          finally { validateRb.disabled = false; }
+        });
+        controls.appendChild(validateRb);
+
+        const execRb = document.createElement('button'); execRb.textContent = 'Execute Rollback on ' + tgt; execRb.style.marginLeft = '8px';
+        const rbStatus = document.createElement('div'); rbStatus.style.marginTop = '8px';
+        execRb.addEventListener('click', async () => {
+          if (!confirm('Execute rollback on ' + tgt + '?')) { rbStatus.innerHTML = '<span style="color:#b21">Rollback cancelled by user</span>'; return; }
+          execRb.disabled = true; rbStatus.innerHTML = 'Executing rollback...';
+          try {
+            const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
+            const resp = await fetch('/ddl/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedRollback }, meta)) });
+            let parsed = null; let bodyText = '';
+            try { parsed = await resp.json(); } catch (e) { bodyText = await resp.text(); }
+            console.log('Rollback response', { status: resp.status, parsed, bodyText });
+            if (parsed && parsed.success) rbStatus.innerHTML = '<span style="color:green">Rollback executed</span>'; else rbStatus.innerHTML = `<div style="color:#b21">Rollback failed: ${escapeHtml(parsed? (parsed.message || JSON.stringify(parsed)) : (bodyText || 'Unknown'))}</div>`;
+          } catch (err) {
+            console.error('Rollback error', err);
+            rbStatus.innerHTML = `<div style="color:#b21">Rollback error: ${escapeHtml(err.message || String(err))}</div>`;
+          } finally { execRb.disabled = false; }
+        });
+        controls.appendChild(execRb);
+        controls.appendChild(rbStatus);
+
+        planDiv.appendChild(controls);
+
+      } catch (err) { planDiv.innerHTML = 'Error: ' + err.message; }
+    });
+
+    // load initial objects
+    loadObjects();
+
+    document.getElementById('viewAuditDb').addEventListener('click', async () => {
+      const av = document.getElementById('auditView');
+      av.style.display = 'block';
+      av.innerHTML = 'Loading DB audit...';
+      try {
+        const env = document.getElementById('auditEnv').value;
+        const action = document.getElementById('auditAction').value || null;
+        const since = document.getElementById('auditSince').value || null;
+        const until = document.getElementById('auditUntil').value || null;
+        const q = '/audit/db?env=' + encodeURIComponent(env) + (action?('&action='+encodeURIComponent(action)):'') + (since?('&since='+encodeURIComponent(since)):'') + (until?('&until='+encodeURIComponent(until)):'');
+  const resp = await fetch(q, { headers: getAuditHeaders() });
+  const json = await resp.json();
+        if (!json.success) { av.innerHTML = '<pre>' + JSON.stringify(json, null, 2) + '</pre>'; return; }
+        if (!json.rows || !json.rows.length) { av.innerHTML = '<em>No DB audit rows</em>'; return; }
+        const html = json.rows.map(e => '<div style="padding:8px;border-bottom:1px solid #f3f3f3"><strong>' + (e.action||'') + ' @ ' + (e.timestamp||'') + ' (' + (e.env||'') + ')</strong><div style="font-family:monospace;margin-top:6px">' + (e.scriptPreview? ('<pre style="white-space:pre-wrap;max-height:120px;overflow:auto">'+(e.scriptPreview)+'</pre>') : '') + '<div>' + (e.error?('<span style="color:red">Error: '+ String(e.error) +'</span>'):'') + '</div></div></div>' ).join('');
+        av.innerHTML = html;
+      } catch (err) { av.innerHTML = '<pre>' + err.message + '</pre>'; }
+    });
+
+    // Initialize
+    loadScripts();
+    setConnectedButton(null);
+    updateEnvHighlight();
+  // validate stored audit creds (if any)
+  validateAuditCredentials();
+
+    // Post a client-side audit entry to server (will include Authorization header if set)
+    async function postClientAudit(entry) {
+      try {
+        const resp = await fetch('/audit/log', { method: 'POST', headers: getAuditHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(entry) });
+        const j = await resp.json().catch(()=>null);
+        return j || { success: resp.ok };
+      } catch (e) { return { success: false, message: e.message } }
+    }
+  </script>
+  </div>
+</body>
+</html>

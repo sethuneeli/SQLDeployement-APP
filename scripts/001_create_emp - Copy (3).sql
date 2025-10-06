@@ -1,0 +1,5 @@
+CREATE TABLE dbo.TableEmp (
+  Id INT PRIMARY KEY,
+  Name NVARCHAR(100) NULL,
+  Salary DECIMAL(10,2) NULL
+);

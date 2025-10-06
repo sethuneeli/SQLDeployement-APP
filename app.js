@@ -1,0 +1,1224 @@
+const express = require('express');
+const path = require('path');
+const exec = require('child_process').exec;
+const execFile = require('child_process').execFile;
+const sql = require('mssql');
+const multer = require('multer');
+const fs = require('fs');
+
+const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.static('public'));
+
+// serve root index.html
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+// Note: destructive statements (CREATE/ALTER/DROP/etc.) are permitted by the server
+
+const sqlConfigs = {
+  DEV: {
+    user: 'test_user', password: 'P@ssword123$', server: 'dbms-aipoc01', database: 'AutopilotDev', options: { encrypt: false, trustServerCertificate: false }
+  },
+  TEST: {
+    user: 'test_user', password: 'P@ssword123$', server: 'dbms-aipoc01', database: 'AutopilotTest', options: { encrypt: false, trustServerCertificate: false }
+  },
+  LIVE: {
+    user: 'test_user', password: 'P@ssword123$', server: 'dbms-aipoc01', database: 'AutopilotProd', options: { encrypt: false, trustServerCertificate: false }
+  },
+};
+
+// connection pools per environment (DEV/TEST/LIVE)
+const pools = {};
+
+// GIT commit & push endpoint
+app.post('/git-update', (req, res) => {
+  const msg = req.body.message || 'Update';
+  exec(`git add . && git commit -m "${msg}" && git push`, (err, stdout, stderr) => {
+    if (err) return res.json({ success: false, stderr });
+    res.json({ success: true, stdout });
+  });
+});
+
+// SQL connect endpoint
+app.get('/sql-connect/:env', async (req, res) => {
+  const env = req.params.env;
+  if (!sqlConfigs[env]) return res.status(400).send('Invalid environment');
+  try {
+    // reuse existing pool when available
+    if (pools[env] && pools[env].connected) {
+      return res.json({ success: true, message: `Already connected to ${env}` });
+    }
+    const pool = new sql.ConnectionPool(sqlConfigs[env]);
+    pools[env] = pool;
+    await pool.connect();
+    return res.json({ success: true, message: `Connected to ${env}` });
+  } catch (e) {
+    // cleanup if we created a pool
+    try { if (pools[env]) { await pools[env].close(); delete pools[env]; } } catch(_){}
+    return res.json({ success: false, message: e.message });
+  }
+});
+
+// Execute SQL script endpoint
+app.post('/execute-sql', async (req, res) => {
+  const { env, script } = req.body || {};
+  if (!env || !script) return res.status(400).json({ success: false, message: 'env and script are required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  // No duplicate destructive checks here; handled by checkDestructiveAllowed earlier
+  if (script.length > 20000) return res.status(400).json({ success: false, message: 'Script too long' });
+
+  try {
+    // helper to execute script and handle 'GO' batch separators
+    async function executeScriptOnPool(pool, scriptText) {
+      // split on lines that contain only GO (case-insensitive)
+      const parts = scriptText.split(/^\s*GO\s*$/gim).map(p => p.trim()).filter(Boolean);
+      let lastRecordset = null;
+      const rowsAffectedAll = [];
+      for (const p of parts) {
+        // use batch to allow multiple statements; fall back to query if batch fails
+        try {
+          const r = await pool.request().batch(p);
+          lastRecordset = (r && r.recordset) ? r.recordset : lastRecordset;
+          if (r && r.rowsAffected) rowsAffectedAll.push(...r.rowsAffected);
+        } catch (inner) {
+          // try query as fallback
+          const r2 = await pool.request().query(p);
+          lastRecordset = (r2 && r2.recordset) ? r2.recordset : lastRecordset;
+          if (r2 && r2.rowsAffected) rowsAffectedAll.push(...r2.rowsAffected);
+        }
+      }
+      return { recordset: lastRecordset, rowsAffected: rowsAffectedAll };
+    }
+
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) {
+      pool = new sql.ConnectionPool(sqlConfigs[env]);
+      await pool.connect();
+      created = true;
+    }
+    const result = await executeScriptOnPool(pool, script);
+    if (created) await pool.close();
+    return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    console.error('/execute-sql error', e && e.stack ? e.stack : e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.listen(3000, () => console.log('Server running on http://localhost:3000'));
+// Configure multer for file uploads
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 20000 * 2 }, // 40KB max file size
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== 'text/plain' && path.extname(file.originalname) !== '.sql') {
+      return cb(new Error('Only .sql or .txt files allowed'));
+    }
+    cb(null, true);
+  }
+});
+
+// Endpoint to upload and execute SQL script file
+app.post('/upload-sql', upload.single('scriptFile'), async (req, res) => {
+  const env = req.body.env;
+  if (!env || !sqlConfigs[env]) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ success: false, message: 'Invalid or missing environment' });
+  }
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+  try {
+    const script = fs.readFileSync(req.file.path, 'utf8');
+    fs.unlinkSync(req.file.path);
+
+    if (script.length > 20000) {
+      return res.status(400).json({ success: false, message: 'Script too long' });
+    }
+
+    // execute using same GO-aware helper as /execute-sql
+    async function executeScriptOnPool(pool, scriptText) {
+      const parts = scriptText.split(/^\s*GO\s*$/gim).map(p => p.trim()).filter(Boolean);
+      let lastRecordset = null;
+      const rowsAffectedAll = [];
+      for (const p of parts) {
+        try {
+          const r = await pool.request().batch(p);
+          lastRecordset = (r && r.recordset) ? r.recordset : lastRecordset;
+          if (r && r.rowsAffected) rowsAffectedAll.push(...r.rowsAffected);
+        } catch (inner) {
+          const r2 = await pool.request().query(p);
+          lastRecordset = (r2 && r2.recordset) ? r2.recordset : lastRecordset;
+          if (r2 && r2.rowsAffected) rowsAffectedAll.push(...r2.rowsAffected);
+        }
+      }
+      return { recordset: lastRecordset, rowsAffected: rowsAffectedAll };
+    }
+
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) {
+      pool = new sql.ConnectionPool(sqlConfigs[env]);
+      await pool.connect();
+      created = true;
+    }
+    const result = await executeScriptOnPool(pool, script);
+    if (created) await pool.close();
+    return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Ensure scripts directory exists
+const scriptsDir = path.join(__dirname, 'scripts');
+if (!fs.existsSync(scriptsDir)) fs.mkdirSync(scriptsDir, { recursive: true });
+
+// Ensure logs directory exists and provide a simple audit logger
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+const auditLogPath = path.join(logsDir, 'audit.log');
+async function writeAudit(entry) {
+  try {
+    const line = JSON.stringify(entry) + '\n';
+    await fs.promises.appendFile(auditLogPath, line, 'utf8');
+  } catch (e) {
+    // best-effort, do not throw
+    console.error('Audit write failed', e.message);
+  }
+}
+
+// DB-backed audit: ensure table exists and insert rows
+const auditTableEnsured = {};
+async function ensureAuditTableInDb(env) {
+  if (!env || auditTableEnsured[env]) return;
+  if (!sqlConfigs[env]) return;
+  const createSql = `IF OBJECT_ID('dbo.ddl_audit','U') IS NULL BEGIN
+    CREATE TABLE dbo.ddl_audit (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      [timestamp] DATETIME2 NULL,
+      [action] NVARCHAR(50) NULL,
+      [env] NVARCHAR(50) NULL,
+      [dryRun] BIT NULL,
+      [success] BIT NULL,
+      [rowsAffected] NVARCHAR(MAX) NULL,
+      [error] NVARCHAR(MAX) NULL,
+      [scriptPreview] NVARCHAR(MAX) NULL,
+      [userName] NVARCHAR(200) NULL,
+      [correlationId] NVARCHAR(200) NULL,
+      [gitCommit] NVARCHAR(200) NULL,
+      [clientIp] NVARCHAR(200) NULL
+    ); END`;
+  let pool = pools[env];
+  let created = false;
+  try {
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    await pool.request().batch(createSql);
+    auditTableEnsured[env] = true;
+  } catch (e) {
+    console.error('ensureAuditTableInDb failed for', env, e.message);
+  } finally {
+    if (created && pool) try { await pool.close(); } catch (_) {}
+  }
+}
+
+async function writeAuditDb(entry) {
+  if (!entry || !entry.env) return;
+  const env = entry.env;
+  if (!sqlConfigs[env]) return;
+  try {
+    await ensureAuditTableInDb(env);
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    const req = pool.request();
+    req.input('timestamp', sql.DateTime2, entry.timestamp ? new Date(entry.timestamp) : new Date());
+    req.input('action', sql.NVarChar(50), entry.action || null);
+    req.input('env', sql.NVarChar(50), entry.env || null);
+    req.input('dryRun', sql.Bit, entry.dryRun ? 1 : 0);
+    req.input('success', sql.Bit, entry.success ? 1 : 0);
+    const rowsAffectedVal = Array.isArray(entry.rowsAffected) ? JSON.stringify(entry.rowsAffected) : (entry.rowsAffected ? String(entry.rowsAffected) : null);
+    req.input('rowsAffected', sql.NVarChar(sql.MAX), rowsAffectedVal);
+  req.input('error', sql.NVarChar(sql.MAX), entry.error || null);
+  req.input('scriptPreview', sql.NVarChar(sql.MAX), entry.scriptPreview || null);
+  req.input('userName', sql.NVarChar(200), entry.user || null);
+  req.input('correlationId', sql.NVarChar(200), entry.correlationId || null);
+  req.input('gitCommit', sql.NVarChar(200), entry.gitCommit || null);
+  req.input('clientIp', sql.NVarChar(200), entry.clientIp || null);
+  await req.query(`INSERT INTO dbo.ddl_audit ([timestamp],[action],[env],[dryRun],[success],[rowsAffected],[error],[scriptPreview],[userName],[correlationId],[gitCommit],[clientIp]) VALUES (@timestamp,@action,@env,@dryRun,@success,@rowsAffected,@error,@scriptPreview,@userName,@correlationId,@gitCommit,@clientIp)`);
+    if (created && pool) try { await pool.close(); } catch (_) {}
+  } catch (e) {
+    console.error('DB audit failed', e.message);
+  }
+}
+
+// Wrap the original writeAudit to also attempt DB write (fire-and-forget)
+const originalWriteAudit = writeAudit;
+writeAudit = async function(entry) {
+  try { await originalWriteAudit(entry); } catch (e) { console.error('file audit failed', e.message); }
+  // attempt DB write but don't await (best-effort)
+  writeAuditDb(entry).catch(() => {});
+};
+
+// endpoint to read recent audit file lines
+app.get('/audit', (req, res) => {
+  try {
+    if (!fs.existsSync(auditLogPath)) return res.json({ success: true, entries: [] });
+    const raw = fs.readFileSync(auditLogPath, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    // return last 200 lines by default
+    const tail = lines.slice(-200);
+    const entries = tail.map(l => {
+      try { return JSON.parse(l); } catch (e) { return { raw: l }; }
+    });
+    return res.json({ success: true, entries });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// List available script files
+app.get('/scripts', (req, res) => {
+  try {
+    const files = fs.readdirSync(scriptsDir).filter(f => path.extname(f).toLowerCase() === '.sql');
+    res.json({ success: true, scripts: files });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Debug endpoint for scripts directory
+app.get('/scripts/debug', (req, res) => {
+  try {
+    const exists = fs.existsSync(scriptsDir);
+    let files = [];
+    let statOk = null;
+    try { files = exists ? fs.readdirSync(scriptsDir) : []; statOk = files.map(f => ({ name: f, stat: fs.statSync(path.join(scriptsDir, f)).isFile() })); } catch (e) { statOk = { error: e.message }; }
+    return res.json({ success: true, scriptsDir: scriptsDir, exists, files, stat: statOk });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Return script file content (safe): GET /scripts/content?filename=foo.sql
+app.get('/scripts/content', (req, res) => {
+  try {
+    const filename = req.query.filename;
+    if (!filename) return res.status(400).json({ success: false, message: 'filename required' });
+    if (path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== '.sql') return res.status(400).json({ success: false, message: 'Invalid filename' });
+    const fullPath = path.join(scriptsDir, filename);
+    if (!fs.existsSync(fullPath)) return res.status(404).json({ success: false, message: 'Script not found' });
+    const content = fs.readFileSync(fullPath, 'utf8');
+    return res.json({ success: true, content });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Run a named script from scripts/ on selected environment
+app.post('/run-script', async (req, res) => {
+  const { env, filename } = req.body || {};
+  if (!env || !filename) return res.status(400).json({ success: false, message: 'env and filename are required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+
+  // Prevent path traversal, ensure filename ends with .sql and exists in scriptsDir
+  if (path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== '.sql') {
+    return res.status(400).json({ success: false, message: 'Invalid filename' });
+  }
+  const fullPath = path.join(scriptsDir, filename);
+  if (!fs.existsSync(fullPath)) return res.status(404).json({ success: false, message: 'Script not found' });
+
+  try {
+    const script = fs.readFileSync(fullPath, 'utf8');
+
+    if (script.length > 20000) {
+      return res.status(400).json({ success: false, message: 'Script too long' });
+    }
+
+    // GO-aware execution helper
+    async function executeScriptOnPool(pool, scriptText) {
+      const parts = scriptText.split(/^\s*GO\s*$/gim).map(p => p.trim()).filter(Boolean);
+      let lastRecordset = null;
+      const rowsAffectedAll = [];
+      for (const p of parts) {
+        try {
+          const r = await pool.request().batch(p);
+          lastRecordset = (r && r.recordset) ? r.recordset : lastRecordset;
+          if (r && r.rowsAffected) rowsAffectedAll.push(...r.rowsAffected);
+        } catch (inner) {
+          const r2 = await pool.request().query(p);
+          lastRecordset = (r2 && r2.recordset) ? r2.recordset : lastRecordset;
+          if (r2 && r2.rowsAffected) rowsAffectedAll.push(...r2.rowsAffected);
+        }
+      }
+      return { recordset: lastRecordset, rowsAffected: rowsAffectedAll };
+    }
+
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) {
+      pool = new sql.ConnectionPool(sqlConfigs[env]);
+      await pool.connect();
+      created = true;
+    }
+    const result = await executeScriptOnPool(pool, script);
+    if (created) await pool.close();
+    return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    // Log server-side for diagnostics and return structured JSON (avoid raw 500 network error page)
+    console.error('/run-script error', e && e.stack ? e.stack : e);
+    try { return res.json({ success: false, message: e.message || String(e) }); } catch (err) { return res.status(500).json({ success: false, message: 'Unexpected server error' }); }
+  }
+});
+
+// --- Git remote management endpoints ---
+const validRemoteName = name => /^[A-Za-z0-9._-]+$/.test(name);
+const validRemoteUrl = url => /^(https?:\/\/|git@)[^\s]+$/.test(url);
+
+// List remotes with their URLs
+app.get('/git/remotes', async (req, res) => {
+  try {
+    // get list of remote names
+    execFile('git', ['remote'], { cwd: __dirname }, (err, stdout, stderr) => {
+      if (err) return res.status(500).json({ success: false, message: stderr || err.message });
+      const names = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (names.length === 0) return res.json({ success: true, remotes: [] });
+      const results = [];
+      let remaining = names.length;
+      names.forEach(name => {
+        execFile('git', ['remote', 'get-url', name], { cwd: __dirname }, (e2, out2, s2) => {
+          const url = (!e2 && out2) ? out2.trim() : null;
+          results.push({ name, url });
+          remaining -= 1;
+          if (remaining === 0) res.json({ success: true, remotes: results });
+        });
+      });
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Add a new remote
+app.post('/git/remote/add', (req, res) => {
+  const { name, url } = req.body || {};
+  if (!name || !url) return res.status(400).json({ success: false, message: 'name and url required' });
+  if (!validRemoteName(name) || !validRemoteUrl(url)) return res.status(400).json({ success: false, message: 'Invalid name or url format' });
+  execFile('git', ['remote', 'add', name, url], { cwd: __dirname }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ success: false, message: stderr || err.message });
+    res.json({ success: true, stdout });
+  });
+});
+
+// Set URL for existing remote
+app.post('/git/remote/set-url', (req, res) => {
+  const { name, url } = req.body || {};
+  if (!name || !url) return res.status(400).json({ success: false, message: 'name and url required' });
+  if (!validRemoteName(name) || !validRemoteUrl(url)) return res.status(400).json({ success: false, message: 'Invalid name or url format' });
+  execFile('git', ['remote', 'set-url', name, url], { cwd: __dirname }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ success: false, message: stderr || err.message });
+    res.json({ success: true, stdout });
+  });
+});
+
+// Remove a remote
+app.post('/git/remote/remove', (req, res) => {
+  const { name } = req.body || {};
+  if (!name) return res.status(400).json({ success: false, message: 'name required' });
+  if (!validRemoteName(name)) return res.status(400).json({ success: false, message: 'Invalid name' });
+  execFile('git', ['remote', 'remove', name], { cwd: __dirname }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ success: false, message: stderr || err.message });
+    res.json({ success: true, stdout });
+  });
+});
+
+// Run script via PowerShell dbatools wrapper
+app.post('/ps/run-script', async (req, res) => {
+  const { env, filename } = req.body || {};
+  if (!env || !filename) return res.status(400).json({ success: false, message: 'env and filename required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+
+  if (path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== '.sql') {
+    return res.status(400).json({ success: false, message: 'Invalid filename' });
+  }
+  const fullPath = path.join(scriptsDir, filename);
+  if (!fs.existsSync(fullPath)) return res.status(404).json({ success: false, message: 'Script not found' });
+
+  // Map env to sql instance & database from sqlConfigs
+  const cfg = sqlConfigs[env];
+  const sqlInstance = cfg.server; // expects host[:port]
+  const database = cfg.database;
+
+  // Try pwsh then powershell
+  const psCandidates = [ 'pwsh', 'powershell' ];
+  const ps = psCandidates.find(p => {
+    try { execFile(p, ['-v'], { stdio: 'ignore' }); return true; } catch { return false; }
+  }) || 'powershell';
+
+  const scriptPath = path.join(__dirname, 'tools', 'run-dbatools.ps1');
+  const args = [ '-NoProfile', '-NonInteractive', '-File', scriptPath, '-SqlInstance', sqlInstance, '-Database', database, '-File', fullPath ];
+  execFile(ps, args, { cwd: __dirname, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (err) {
+      // If PowerShell returned JSON error, try parse
+      try { const parsed = JSON.parse(stdout || stderr); return res.status(500).json({ success: false, details: parsed }); } catch (e) { return res.status(500).json({ success: false, message: stderr || err.message }); }
+    }
+    try {
+      const parsed = JSON.parse(stdout);
+      return res.json({ success: true, result: parsed });
+    } catch (e) {
+      return res.status(500).json({ success: false, message: 'Invalid JSON from PowerShell', raw: stdout.substring(0, 10000) });
+    }
+  });
+});
+
+// Disconnect endpoint - closes pooled connection for an environment
+app.post('/sql-disconnect/:env', async (req, res) => {
+  const env = req.params.env;
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  try {
+    if (pools[env]) {
+      try { await pools[env].close(); } catch (_) {}
+      delete pools[env];
+    }
+    return res.json({ success: true, message: `Disconnected from ${env}` });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// --- DDL compare / plan / apply endpoints ---
+
+// simple utility: split column list respecting parentheses
+function splitColumns(columnText) {
+  const cols = [];
+  let cur = '';
+  let depth = 0;
+  for (let i = 0; i < columnText.length; i++) {
+    const ch = columnText[i];
+    if (ch === '(') { depth++; cur += ch; continue; }
+    if (ch === ')') { depth--; cur += ch; continue; }
+    if (ch === ',' && depth === 0) { cols.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) cols.push(cur.trim());
+  return cols.filter(Boolean);
+}
+
+// parse CREATE TABLE statements from script
+function parseCreateTables(script) {
+  const re = /create\s+table\s+([\[\]"\w\.]+)\s*\(([^;]+?)\)\s*(;|$)/ig;
+  const matches = [];
+  let m;
+  while ((m = re.exec(script))) {
+    let fullname = m[1].trim();
+    // remove brackets/quotes
+    fullname = fullname.replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    let schema = 'dbo';
+    let table = fullname;
+    if (fullname.indexOf('.') !== -1) {
+      const parts = fullname.split('.');
+      schema = parts[0].replace(/^[\[\]"]+|[\[\]"]+$/g, '') || 'dbo';
+      table = parts[1].replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    }
+    const colsText = m[2].trim();
+    const colList = splitColumns(colsText).map(c => ({ raw: c }));
+    matches.push({ schema, table, raw: m[0], columns: colList });
+  }
+  return matches;
+}
+
+// parse ALTER TABLE statements (ADD/DROP/ALTER COLUMN)
+function parseAlterStatements(script) {
+  const alters = [];
+  // simple regexes for ADD, DROP COLUMN, ALTER COLUMN
+  const reAdd = /alter\s+table\s+([\[\]"\w\.]+)\s+add\s+\(?([^;]+?)\)?\s*(;|$)/ig;
+  const reDrop = /alter\s+table\s+([\[\]"\w\.]+)\s+drop\s+column\s+([^;]+?)\s*(;|$)/ig;
+  const reAlter = /alter\s+table\s+([\[\]"\w\.]+)\s+alter\s+column\s+([^;]+?)\s*(;|$)/ig;
+  let m;
+  while ((m = reAdd.exec(script))) {
+    let fullname = m[1].trim().replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    let schema = 'dbo', table = fullname;
+    if (fullname.indexOf('.') !== -1) { const parts = fullname.split('.'); schema = parts[0]; table = parts[1]; }
+    alters.push({ type: 'ADD', schema, table, raw: m[0], colsText: m[2].trim() });
+  }
+  while ((m = reDrop.exec(script))) {
+    let fullname = m[1].trim().replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    let schema = 'dbo', table = fullname;
+    if (fullname.indexOf('.') !== -1) { const parts = fullname.split('.'); schema = parts[0]; table = parts[1]; }
+    alters.push({ type: 'DROP', schema, table, raw: m[0], colsText: m[2].trim() });
+  }
+  while ((m = reAlter.exec(script))) {
+    let fullname = m[1].trim().replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    let schema = 'dbo', table = fullname;
+    if (fullname.indexOf('.') !== -1) { const parts = fullname.split('.'); schema = parts[0]; table = parts[1]; }
+    alters.push({ type: 'ALTER', schema, table, raw: m[0], colsText: m[2].trim() });
+  }
+  return alters;
+}
+
+// fetch current columns for a table from the DB
+async function getDbColumns(env, schema, table) {
+  if (!sqlConfigs[env]) throw new Error('Invalid environment');
+  // use pooled connection if available
+  let pool = pools[env];
+  let created = false;
+  if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+  const q = `SELECT c.name AS column_name, t.name AS type_name, c.max_length, c.precision, c.scale, c.is_nullable, OBJECT_DEFINITION(c.default_object_id) AS default_definition,
+             c.is_computed, cc.definition AS computed_definition
+             FROM sys.columns c
+             LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+             JOIN sys.types t ON c.user_type_id = t.user_type_id
+             WHERE c.object_id = OBJECT_ID(@fullname)`;
+  const fullname = `[${schema}].[${table}]`;
+  const result = await pool.request().input('fullname', sql.NVarChar, fullname).query(q);
+  if (created) await pool.close();
+  return (result.recordset || []).map(r => ({ name: r.column_name, type: r.type_name, max_length: r.max_length, precision: r.precision, scale: r.scale, is_nullable: r.is_nullable, default_definition: r.default_definition, is_computed: !!r.is_computed, computed_definition: r.computed_definition }));
+}
+
+// list tables in an environment
+app.get('/db/objects', async (req, res) => {
+  const env = (req.query.env || '').toString();
+  if (!env || !sqlConfigs[env]) return res.status(400).json({ success: false, message: 'env query param required and must be a valid environment' });
+  try {
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    // gather tables, views, procedures, functions, triggers, indexes
+    const objects = [];
+    // tables
+    const qTables = `SELECT s.name AS schema_name, t.name AS name FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id`;
+    const rTables = await pool.request().query(qTables);
+    (rTables.recordset || []).forEach(rw => objects.push({ type: 'TABLE', schema: rw.schema_name, name: rw.name }));
+    // views
+    const qViews = `SELECT s.name AS schema_name, v.name AS name FROM sys.views v JOIN sys.schemas s ON v.schema_id = s.schema_id`;
+    const rViews = await pool.request().query(qViews);
+    (rViews.recordset || []).forEach(rw => objects.push({ type: 'VIEW', schema: rw.schema_name, name: rw.name }));
+    // procedures
+    const qProcs = `SELECT s.name AS schema_name, p.name AS name FROM sys.procedures p JOIN sys.schemas s ON p.schema_id = s.schema_id`;
+    const rProcs = await pool.request().query(qProcs);
+    (rProcs.recordset || []).forEach(rw => objects.push({ type: 'PROCEDURE', schema: rw.schema_name, name: rw.name }));
+    // functions (scalar/table-valued)
+    const qFuncs = `SELECT s.name AS schema_name, o.name AS name, o.type FROM sys.objects o JOIN sys.schemas s ON o.schema_id = s.schema_id WHERE o.type IN ('FN','IF','TF','FS','FT')`;
+    const rFuncs = await pool.request().query(qFuncs);
+    (rFuncs.recordset || []).forEach(rw => objects.push({ type: 'FUNCTION', schema: rw.schema_name, name: rw.name }));
+    // table-level triggers
+    const qTriggers = `SELECT s.name AS schema_name, t.name AS trigger_name, OBJECT_NAME(t.parent_id) AS parent_table FROM sys.triggers t JOIN sys.objects o ON t.parent_id = o.object_id JOIN sys.schemas s ON o.schema_id = s.schema_id WHERE t.parent_id IS NOT NULL`;
+    const rTriggers = await pool.request().query(qTriggers);
+    (rTriggers.recordset || []).forEach(rw => objects.push({ type: 'TRIGGER', schema: rw.schema_name, table: rw.parent_table, name: rw.trigger_name }));
+    // indexes
+    const qIdx = `SELECT s.name AS schema_name, o.name AS table_name, i.name AS index_name FROM sys.indexes i JOIN sys.objects o ON i.object_id = o.object_id JOIN sys.schemas s ON o.schema_id = s.schema_id WHERE i.is_primary_key = 0 AND i.name IS NOT NULL`;
+    const rIdx = await pool.request().query(qIdx);
+    (rIdx.recordset || []).forEach(rw => objects.push({ type: 'INDEX', schema: rw.schema_name, table: rw.table_name, name: rw.index_name }));
+
+    if (created) await pool.close();
+    return res.json({ success: true, objects });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Build a minimal CREATE TABLE script (plus PK/index statements) from current table metadata
+async function getCreateTableScript(env, schema, table) {
+  const cols = await getDbColumns(env, schema, table);
+  const meta = await getTableMetadataSql(env, schema, table);
+  const fullname = `[${schema}].[${table}]`;
+  const colDefs = cols.map(c => {
+    // computed column handling
+    if (c.is_computed) {
+      // computed columns have their definition in computed_definition
+      return `[${c.name}] AS (${c.computed_definition})`;
+    }
+    // build type string
+    let type = c.type;
+    const t = type.toLowerCase();
+    if (['varchar','nvarchar','varbinary','char','nchar'].includes(t)) {
+      if (c.max_length === -1) type = `${type}(MAX)`; else type = `${type}(${c.max_length})`;
+    } else if (t === 'decimal' || t === 'numeric') {
+      type = `${type}(${c.precision || 18},${c.scale || 0})`;
+    }
+    const def = c.default_definition ? ` DEFAULT ${c.default_definition}` : '';
+    const nullity = c.is_nullable ? 'NULL' : 'NOT NULL';
+    return `[${c.name}] ${type} ${nullity}${def}`;
+  });
+  const create = `CREATE TABLE ${fullname} (\n  ${colDefs.join(',\n  ')}\n);`;
+  const extras = [];
+  if (meta.primaryKey) extras.push(meta.primaryKey);
+  if (meta.indexes && meta.indexes.length) extras.push(...meta.indexes);
+  // defaults may have been included in column defs, but include constraints if any remained
+  Object.keys(meta.defaults || {}).forEach(col => {
+    const d = meta.defaults[col];
+    if (d && d.definition) extras.push(`ALTER TABLE ${fullname} ADD CONSTRAINT [${d.constraint}] DEFAULT ${d.definition} FOR [${col}]`);
+  });
+  // include check constraints
+  try {
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    const qChecks = `SELECT cc.name AS constraint_name, OBJECT_DEFINITION(cc.object_id) AS definition FROM sys.check_constraints cc WHERE cc.parent_object_id = OBJECT_ID(@fullname)`;
+    const rChecks = await pool.request().input('fullname', sql.NVarChar, fullname).query(qChecks);
+    (rChecks.recordset || []).forEach(r => { if (r.definition) extras.push(r.definition); });
+    // include triggers
+    const qTrig = `SELECT t.name AS trigger_name, OBJECT_DEFINITION(t.object_id) AS definition FROM sys.triggers t WHERE t.parent_id = OBJECT_ID(@fullname) AND t.is_ms_shipped = 0`;
+    const rTrig = await pool.request().input('fullname', sql.NVarChar, fullname).query(qTrig);
+    (rTrig.recordset || []).forEach(r => { if (r.definition) extras.push(r.definition); });
+    if (created) await pool.close();
+  } catch (e) {
+    // ignore extras failure
+  }
+  return { create, extras: extras.join('\n') };
+}
+
+// get object dependencies (what the object references)
+async function getObjectDependencies(env, schema, name) {
+  if (!env || !sqlConfigs[env]) throw new Error('Invalid environment');
+  const fullname = `[${schema}].[${name}]`;
+  let pool = pools[env]; let created = false;
+  if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+  try {
+    const q = `SELECT referenced_schema_name, referenced_entity_name, referenced_class_desc
+               FROM sys.sql_expression_dependencies
+               WHERE referencing_id = OBJECT_ID(@fullname)`;
+    const r = await pool.request().input('fullname', sql.NVarChar, fullname).query(q);
+    const deps = (r.recordset || []).map(rr => ({ schema: rr.referenced_schema_name || 'dbo', name: rr.referenced_entity_name, class: rr.referenced_class_desc } )).filter(d => d.name);
+    return deps;
+  } finally { if (created) try { await pool.close(); } catch(_) {} }
+}
+
+// get table row count and sample rows (top N)
+async function getTableSample(env, schema, table, topN=5) {
+  if (!env || !sqlConfigs[env]) throw new Error('Invalid environment');
+  const fullname = `[${schema}].[${table}]`;
+  let pool = pools[env]; let created = false;
+  if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+  try {
+    const countQ = `SELECT COUNT(*) AS cnt FROM ${fullname}`;
+    const sampQ = `SELECT TOP (${topN}) * FROM ${fullname}`;
+    const rc = await pool.request().query(countQ);
+    const rs = await pool.request().query(sampQ);
+    const cnt = (rc.recordset && rc.recordset[0]) ? rc.recordset[0].cnt : null;
+    return { count: cnt, sample: rs.recordset || [] };
+  } finally { if (created) try { await pool.close(); } catch(_) {} }
+}
+
+// return CREATE script for a specific object
+app.get('/db/object', async (req, res) => {
+  const env = (req.query.env || '').toString();
+  const schema = (req.query.schema || 'dbo').toString();
+  const name = (req.query.table || req.query.name || '').toString();
+  const type = (req.query.type || '').toString().toUpperCase();
+  if (!env || !sqlConfigs[env] || !name) return res.status(400).json({ success: false, message: 'env and name required' });
+  try {
+    // default to TABLE if no type provided
+    const objType = type || 'TABLE';
+    if (objType === 'TABLE') {
+      const s = await getCreateTableScript(env, schema, name);
+      // dependencies and sample rows
+      let deps = [];
+      try { deps = await getObjectDependencies(env, schema, name); } catch (e) { deps = []; }
+      let sample = null;
+      try { sample = await getTableSample(env, schema, name, 5); } catch (e) { sample = null; }
+      return res.json({ success: true, type: 'TABLE', create: s.create, extras: s.extras, dependencies: deps, sample });
+    }
+    // for views/procs/functions/triggers, use OBJECT_DEFINITION
+    if (['VIEW','PROCEDURE','FUNCTION','TRIGGER'].includes(objType)) {
+      let pool = pools[env];
+      let created = false;
+      if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+      // find object_id
+      const fullname = `[${schema}].[${name}]`;
+      const q = `SELECT OBJECT_DEFINITION(OBJECT_ID(@fullname)) AS def`;
+      const r = await pool.request().input('fullname', sql.NVarChar, fullname).query(q);
+      if (created) await pool.close();
+      const def = (r.recordset && r.recordset[0] && r.recordset[0].def) ? r.recordset[0].def : null;
+      if (!def) return res.status(404).json({ success: false, message: 'Object not found or no definition available' });
+      return res.json({ success: true, type: objType, create: def, extras: '' });
+    }
+    // index: return single index create SQL
+    if (objType === 'INDEX') {
+      // name parameter expected to be index name, along with table
+      const table = (req.query.table || '').toString();
+      if (!table) return res.status(400).json({ success: false, message: 'table parameter required for index' });
+      // reuse getTableMetadataSql to get index SQLs and pick the matching one
+      const meta = await getTableMetadataSql(env, schema, table);
+      const matches = (meta.indexes || []).filter(sq => sq.indexOf('[' + (name) + ']') !== -1 || sq.indexOf(' ' + (name) + ' ') !== -1);
+      const sqlText = matches.length ? matches[0] : ((meta.indexes && meta.indexes.length) ? meta.indexes.join('\n') : '');
+      return res.json({ success: true, type: 'INDEX', create: sqlText, extras: '' });
+    }
+    return res.status(400).json({ success: false, message: 'Unsupported object type' });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Generate diff/plan from source environment to target environment for selected objects
+app.post('/ddl/diff', express.json(), async (req, res) => {
+  const { fromEnv, toEnv, objects } = req.body || {};
+  if (!fromEnv || !toEnv || !objects || !Array.isArray(objects) || objects.length === 0) return res.status(400).json({ success: false, message: 'fromEnv, toEnv, and objects[] are required' });
+  if (!sqlConfigs[fromEnv] || !sqlConfigs[toEnv]) return res.status(400).json({ success: false, message: 'Invalid environment(s)' });
+  try {
+    const plans = [];
+    for (const o of objects) {
+      const schema = o.schema || 'dbo';
+      const name = o.name || o.table || o.object || '';
+      const objType = (o.type || 'TABLE').toUpperCase();
+      if (!name) { plans.push({ schema, name: null, type: objType, error: 'Invalid object name', implementation: '--', rollback: '--' }); continue; }
+
+      // for TABLEs, use existing create->plan flow
+      if (objType === 'TABLE') {
+        const s = await getCreateTableScript(fromEnv, schema, name);
+        const fullScript = s.create + '\n' + (s.extras || '');
+        const parsedCreates = parseCreateTables(fullScript);
+        if (!parsedCreates || parsedCreates.length === 0) {
+          plans.push({ schema, name, type: 'TABLE', error: 'Could not parse CREATE from source', implementation: '--', rollback: '--' });
+          continue;
+        }
+        const parsed = parsedCreates[0];
+        const p = await planCreateTable(toEnv, parsed);
+        // build diff summary by comparing columns from source and target
+        let diffSummary = { added: [], removed: [], altered: [] };
+        try {
+          const srcCols = await getDbColumns(fromEnv, schema, name);
+          const tgtCols = await getDbColumns(toEnv, schema, name);
+          const srcMap = {}; srcCols.forEach(c => srcMap[c.name.toLowerCase()] = c);
+          const tgtMap = {}; tgtCols.forEach(c => tgtMap[c.name.toLowerCase()] = c);
+          Object.keys(srcMap).forEach(n => { if (!tgtMap[n]) diffSummary.added.push(srcMap[n].name); });
+          Object.keys(tgtMap).forEach(n => { if (!srcMap[n]) diffSummary.removed.push(tgtMap[n].name); });
+          Object.keys(srcMap).forEach(n => { if (tgtMap[n]) { const sC = srcMap[n]; const tC = tgtMap[n]; const sSig = `${sC.type}|${sC.max_length}|${sC.precision}|${sC.scale}|${sC.is_nullable}|${sC.is_computed? '1':''}`; const tSig = `${tC.type}|${tC.max_length}|${tC.precision}|${tC.scale}|${tC.is_nullable}|${tC.is_computed? '1':''}`; if (sSig !== tSig) diffSummary.altered.push({ column: sC.name, from: sSig, to: tSig }); } });
+        } catch (e) {}
+        plans.push({ schema, name, type: 'TABLE', implementation: p.impl, rollback: p.rollback, notes: p.notes, diffSummary });
+        continue;
+      }
+
+      // For non-table objects: compare definitions
+      try {
+        // fetch source definition
+        let poolSrc = pools[fromEnv]; let createdSrc = false; if (!poolSrc || !poolSrc.connected) { poolSrc = new sql.ConnectionPool(sqlConfigs[fromEnv]); await poolSrc.connect(); createdSrc = true; }
+        const fullName = `[${schema}].[${name}]`;
+        const srcQ = `SELECT OBJECT_DEFINITION(OBJECT_ID(@fullname)) AS def`;
+        const srcR = await poolSrc.request().input('fullname', sql.NVarChar, fullName).query(srcQ);
+        if (createdSrc) await poolSrc.close();
+        const srcDef = (srcR.recordset && srcR.recordset[0] && srcR.recordset[0].def) ? srcR.recordset[0].def : null;
+
+        // fetch target definition
+        let poolTgt = pools[toEnv]; let createdTgt = false; if (!poolTgt || !poolTgt.connected) { poolTgt = new sql.ConnectionPool(sqlConfigs[toEnv]); await poolTgt.connect(); createdTgt = true; }
+        const tgtR = await poolTgt.request().input('fullname', sql.NVarChar, fullName).query(srcQ);
+        if (createdTgt) await poolTgt.close();
+        const tgtDef = (tgtR.recordset && tgtR.recordset[0] && tgtR.recordset[0].def) ? tgtR.recordset[0].def : null;
+
+        // decide implementation/rollback
+        let impl = '-- No changes detected';
+        let rollback = '-- No rollback generated';
+        if (srcDef && !tgtDef) {
+          // create on target
+          impl = srcDef;
+          rollback = `DROP ${objType} ${fullName}`;
+        } else if (srcDef && tgtDef && srcDef.trim() !== tgtDef.trim()) {
+          // replace: create new (can be DROP+CREATE)
+          impl = `-- Replace ${objType}\nDROP ${objType} ${fullName}\nGO\n${srcDef}`;
+          rollback = `-- rollback restore target definition\n${tgtDef}`;
+        } else if (!srcDef) {
+          impl = `-- Source does not contain ${objType} ${fullName}`;
+        }
+        const diffSummary = { existsInSource: !!srcDef, existsInTarget: !!tgtDef, changed: !!(srcDef && tgtDef && srcDef.trim() !== tgtDef.trim()) };
+        plans.push({ schema, name, type: objType, implementation: impl, rollback, diffSummary });
+      } catch (e) {
+        plans.push({ schema, name, type: objType, error: e.message, implementation: '--', rollback: '--' });
+      }
+    }
+    // combined scripts
+    const combinedImpl = plans.map(p => p.implementation).join('\n\n');
+    const combinedRollback = plans.map(p => p.rollback).reverse().join('\n\n');
+
+    // build dependency graph for topological order (best-effort)
+    const nameKey = p => (p.type || 'TABLE') + '::' + (p.schema || '') + '::' + (p.name || '');
+    const nodes = {};
+    plans.forEach(p => { nodes[nameKey(p)] = { obj: p, deps: [] }; });
+    // populate deps from p.diffSummary.dependencies when available or from getObjectDependencies
+    for (const p of plans) {
+      try {
+        if (p.type === 'TABLE') {
+          const deps = p.diffSummary && p.diffSummary.dependencies ? p.diffSummary.dependencies : (await getObjectDependencies(fromEnv, p.schema, p.name));
+          (deps || []).forEach(d => {
+            const key = 'TABLE::' + (d.schema||'dbo') + '::' + d.name;
+            if (nodes[key]) nodes[nameKey(p)].deps.push(key);
+          });
+        } else if (p.diffSummary && p.diffSummary.existsInSource && p.diffSummary.existsInTarget === false) {
+          // no dependencies
+        }
+      } catch (e) { /* ignore */ }
+    }
+    // Kahn's algorithm for topo sort
+    const inDegree = {}; Object.keys(nodes).forEach(k => inDegree[k] = 0);
+    Object.keys(nodes).forEach(k => nodes[k].deps.forEach(d => { if (inDegree[d] !== undefined) inDegree[d]++; }));
+    const queue = Object.keys(inDegree).filter(k => inDegree[k] === 0);
+    const order = [];
+    while (queue.length) {
+      const n = queue.shift(); order.push(n);
+      (nodes[n].deps || []).forEach(m => { inDegree[m]--; if (inDegree[m] === 0) queue.push(m); });
+    }
+    const applyOrder = order.map(k => nodes[k] ? nodes[k].obj : null).filter(Boolean).map(o => ({ type: o.type, schema: o.schema, name: o.name }));
+
+    return res.json({ success: true, plans, combinedImpl, combinedRollback, applyOrder });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// get default constraints, primary key, and index create SQLs for a table
+async function getTableMetadataSql(env, schema, table) {
+  if (!sqlConfigs[env]) throw new Error('Invalid environment');
+  let pool = pools[env];
+  let created = false;
+  if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+  const fullname = `[${schema}].[${table}]`;
+  // defaults
+  const qDefaults = `SELECT col.name AS column_name, dc.name AS constraint_name, OBJECT_DEFINITION(dc.object_id) AS definition
+    FROM sys.default_constraints dc
+    JOIN sys.columns col ON dc.parent_object_id = col.object_id AND dc.parent_column_id = col.column_id
+    WHERE dc.parent_object_id = OBJECT_ID(@fullname)`;
+  const qIndexes = `SELECT i.name AS index_name, i.is_unique, i.type_desc,
+      (SELECT '[' + c.name + ']'+ CASE WHEN ic.is_descending_key=1 THEN ' DESC' ELSE '' END + ','
+       FROM sys.index_columns ic JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+       WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+       ORDER BY ic.key_ordinal
+       FOR XML PATH('')) AS key_columns,
+      (SELECT '[' + c.name + '],' FROM sys.index_columns ic JOIN sys.columns c ON ic.object_id=c.object_id AND ic.column_id=c.column_id WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=1 FOR XML PATH('')) AS included_columns
+    FROM sys.indexes i
+    WHERE i.object_id = OBJECT_ID(@fullname) AND i.is_primary_key = 0 AND i.is_hypothetical = 0`;
+  const qPK = `SELECT kc.name AS constraint_name,
+      (SELECT '[' + c.name + ']'+',' FROM sys.index_columns ic JOIN sys.columns c ON ic.object_id=c.object_id AND ic.column_id=c.column_id WHERE ic.object_id=kc.parent_object_id AND ic.index_id=kc.unique_index_id ORDER BY ic.key_ordinal FOR XML PATH('')) AS pk_columns
+    FROM sys.key_constraints kc WHERE kc.parent_object_id = OBJECT_ID(@fullname) AND kc.type = 'PK'`;
+
+  const defaults = await pool.request().input('fullname', sql.NVarChar, fullname).query(qDefaults);
+  const idxs = await pool.request().input('fullname', sql.NVarChar, fullname).query(qIndexes);
+  const pks = await pool.request().input('fullname', sql.NVarChar, fullname).query(qPK);
+  if (created) await pool.close();
+
+  const defaultMap = {};
+  (defaults.recordset || []).forEach(r => { defaultMap[r.column_name] = { constraint: r.constraint_name, definition: r.definition }; });
+
+  const indexSqls = [];
+  (idxs.recordset || []).forEach(r => {
+    let keys = (r.key_columns || '').replace(/,$/, '');
+    let inc = (r.included_columns || '').replace(/,$/, '');
+    if (!keys) return;
+    // remove xml artifacts
+    keys = keys.replace(/\,\s*$/,'');
+    const unique = r.is_unique ? 'UNIQUE ' : '';
+    const idxName = r.index_name;
+    const incPart = inc ? (' INCLUDE (' + inc.replace(/,$/, '') + ')') : '';
+    indexSqls.push(`CREATE ${unique}NONCLUSTERED INDEX [${idxName}] ON ${fullname} (${keys})${incPart};`);
+  });
+
+  let pkSql = null;
+  if ((pks.recordset || []).length) {
+    const pk = pks.recordset[0];
+    let cols = (pk.pk_columns || '').replace(/,$/, '');
+    if (cols) pkSql = `ALTER TABLE ${fullname} ADD CONSTRAINT [${pk.constraint_name}] PRIMARY KEY (${cols});`;
+  }
+
+  return { defaults: defaultMap, indexes: indexSqls, primaryKey: pkSql };
+}
+
+// generate a simple normalized column signature string from DB metadata
+function dbColumnSignature(col) {
+  if (!col) return '';
+  let type = col.type;
+  return `${col.name} ${col.type}${col.max_length? '('+col.max_length+')':''} ${col.is_nullable ? 'NULL' : 'NOT NULL'}`;
+}
+
+// create implementation and rollback scripts for CREATE TABLE statements
+async function planCreateTable(env, tbl) {
+  const schema = tbl.schema || 'dbo';
+  const table = tbl.table;
+  const providedCols = tbl.columns; // array of { raw }
+  // parse provided columns into name and definition (basic)
+  const parsedProvided = providedCols.map(c => {
+    // match: [name] <rest>
+    const m = c.raw.match(/^\s*([\[\]"\w]+)\s+(.*)$/s);
+    if (!m) return { raw: c.raw };
+    const name = m[1].replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+    const def = m[2].trim();
+    return { name, def, raw: c.raw };
+  });
+
+  // get current columns
+  let dbCols = [];
+  try { dbCols = await getDbColumns(env, schema, table); } catch (e) { dbCols = []; }
+
+  const dbColMap = {};
+  dbCols.forEach(c => dbColMap[c.name.toLowerCase()] = c);
+
+  const implParts = [];
+  const rollbackParts = [];
+
+  if (dbCols.length === 0) {
+    // table does not exist -> implementation is the provided CREATE TABLE, rollback drops table
+    implParts.push(tbl.raw);
+    rollbackParts.push(`DROP TABLE [${schema}].[${table}]`);
+    return { impl: implParts.join('\n'), rollback: rollbackParts.join('\n'), notes: ['Table does not exist; create and drop generated'] };
+  }
+
+  // table exists: compare columns
+  const notes = [];
+  // track columns to drop (present in db but not in provided)
+  const providedNames = parsedProvided.map(p => p.name && p.name.toLowerCase()).filter(Boolean);
+  // additions or alterations
+  for (const p of parsedProvided) {
+    if (!p.name) { notes.push(`Could not parse provided column definition: ${p.raw}`); continue; }
+    const name = p.name;
+    const db = dbColMap[name.toLowerCase()];
+    if (!db) {
+      // add column
+      implParts.push(`ALTER TABLE [${schema}].[${table}] ADD ${p.name} ${p.def}`);
+      rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] DROP COLUMN ${p.name}`); // rollback drop the added column
+      notes.push(`Column ${name} will be ADDED`);
+    } else {
+      // crude check: see if definition contains the db type name
+      const providedLower = p.def.toLowerCase();
+      if (!providedLower.includes(db.type.toLowerCase())) {
+        // type likely changed
+        implParts.push(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${p.name} ${p.def}`);
+        // rollback: attempt to restore original type
+        const origType = db.type + (db.max_length && db.max_length > 0 ? `(${db.max_length})` : (db.precision? `(${db.precision},${db.scale})`: ''));
+        const nullability = db.is_nullable ? 'NULL' : 'NOT NULL';
+        rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${p.name} ${origType} ${nullability}`);
+        notes.push(`Column ${name} will be ALTERED (type/definition differs)`);
+      }
+    }
+  }
+
+  // dropped columns
+  for (const db of dbCols) {
+    if (!providedNames.includes(db.name.toLowerCase())) {
+      // drop column
+      implParts.push(`ALTER TABLE [${schema}].[${table}] DROP COLUMN ${db.name}`);
+      // rollback: add column back with type and nullability (default/constraints not restored)
+      const origType = db.type + (db.max_length && db.max_length > 0 ? `(${db.max_length})` : (db.precision? `(${db.precision},${db.scale})`: ''));
+      const nullability = db.is_nullable ? 'NULL' : 'NOT NULL';
+      rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] ADD ${db.name} ${origType} ${nullability}`);
+      notes.push(`Column ${db.name} will be DROPPED`);
+    }
+  }
+
+  // try to include defaults/indexes/pk in rollback if possible
+  try {
+    const meta = await getTableMetadataSql(env, schema, table);
+    // include PK and indexes (recreate) after adding columns back
+    if (meta.primaryKey) rollbackParts.push(`-- recreate primary key\n${meta.primaryKey}`);
+    if (meta.indexes && meta.indexes.length) rollbackParts.push('-- recreate indexes\n' + meta.indexes.join('\n'));
+    // include defaults as constraints
+    Object.keys(meta.defaults || {}).forEach(col => {
+      const d = meta.defaults[col];
+      if (d && d.definition) rollbackParts.push(`ALTER TABLE [${schema}].[${table}] ADD CONSTRAINT [${d.constraint}] DEFAULT ${d.definition} FOR [${col}]`);
+    });
+  } catch (e) {
+    // ignore metadata failures for rollback
+  }
+
+  return { impl: implParts.join('\n') || '-- No changes detected', rollback: rollbackParts.join('\n') || '-- No rollback', notes };
+}
+
+// POST /ddl/plan - analyze given script and produce implementation & rollback scripts
+app.post('/ddl/plan', express.json(), async (req, res) => {
+  const { env, script } = req.body || {};
+  if (!env || !script) return res.status(400).json({ success: false, message: 'env and script required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  try {
+    const plans = [];
+    const creates = parseCreateTables(script);
+    for (const c of creates) {
+      const p = await planCreateTable(env, c);
+      plans.push({ schema: c.schema, table: c.table, implementation: p.impl, rollback: p.rollback, notes: p.notes });
+    }
+    // handle ALTER statements too
+    const alters = parseAlterStatements(script);
+    for (const a of alters) {
+      // simple planning for alter
+      const p = await planAlterStatement(env, a);
+      plans.push({ schema: a.schema, table: a.table, implementation: p.impl, rollback: p.rollback, notes: p.notes });
+    }
+    if (!plans.length) return res.json({ success: true, plans: [], message: 'No CREATE or ALTER TABLE statements found' });
+    return res.json({ success: true, plans });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Plan an ALTER TABLE statement object produced by parseAlterStatements
+async function planAlterStatement(env, stmt) {
+  const schema = stmt.schema || 'dbo';
+  const table = stmt.table;
+  const notes = [];
+  const implParts = [];
+  const rollbackParts = [];
+  // get current columns
+  let dbCols = [];
+  try { dbCols = await getDbColumns(env, schema, table); } catch (e) { dbCols = []; }
+  const dbMap = {};
+  dbCols.forEach(c => dbMap[c.name.toLowerCase()] = c);
+
+  if (stmt.type === 'ADD') {
+    // split cols by comma at top level
+    const cols = splitColumns(stmt.colsText);
+    for (const craw of cols) {
+      implParts.push(`ALTER TABLE [${schema}].[${table}] ADD ${craw}`);
+      // extract column name
+      const m = craw.match(/^\s*([\[\]"\w]+)\s+/);
+      if (m) {
+        const name = m[1].replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+        rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] DROP COLUMN ${name}`);
+        notes.push(`Column ${name} will be ADDED`);
+      } else {
+        notes.push(`Could not parse ADD column definition: ${craw}`);
+      }
+    }
+  } else if (stmt.type === 'DROP') {
+    // colsText may contain comma-separated names
+    const names = stmt.colsText.split(',').map(s => s.trim().replace(/^[\[\]"]+|[\[\]"]+$/g, ''));
+    for (const name of names) {
+      implParts.push(`ALTER TABLE [${schema}].[${table}] DROP COLUMN ${name}`);
+      // rollback: re-add with original type if available
+      const db = dbMap[name.toLowerCase()];
+      if (db) {
+        const origType = db.type + (db.max_length && db.max_length > 0 ? `(${db.max_length})` : (db.precision? `(${db.precision},${db.scale})`: ''));
+        const nullability = db.is_nullable ? 'NULL' : 'NOT NULL';
+        rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] ADD ${name} ${origType} ${nullability}`);
+        notes.push(`Column ${name} will be DROPPED`);
+      } else {
+        notes.push(`Column ${name} will be DROPPED (no type info available for rollback)`);
+      }
+    }
+    // try to include indexes/defaults/pk
+    try {
+      const meta = await getTableMetadataSql(env, schema, table);
+      if (meta.primaryKey) rollbackParts.push(`-- recreate primary key\n${meta.primaryKey}`);
+      if (meta.indexes && meta.indexes.length) rollbackParts.push('-- recreate indexes\n' + meta.indexes.join('\n'));
+      Object.keys(meta.defaults || {}).forEach(col => {
+        const d = meta.defaults[col];
+        if (d && d.definition) rollbackParts.push(`ALTER TABLE [${schema}].[${table}] ADD CONSTRAINT [${d.constraint}] DEFAULT ${d.definition} FOR [${col}]`);
+      });
+    } catch (e) {}
+  } else if (stmt.type === 'ALTER') {
+    // colsText contains something like: ColumnName TYPE NULL/NOT NULL
+    const cols = splitColumns(stmt.colsText);
+    for (const c of cols) {
+      implParts.push(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${c}`);
+      const m = c.match(/^\s*([\[\]"\w]+)\s+(.*)$/s);
+      if (m) {
+        const name = m[1].replace(/^[\[\]"]+|[\[\]"]+$/g, '');
+        const db = dbMap[name.toLowerCase()];
+        if (db) {
+          const origType = db.type + (db.max_length && db.max_length > 0 ? `(${db.max_length})` : (db.precision? `(${db.precision},${db.scale})`: ''));
+          const nullability = db.is_nullable ? 'NULL' : 'NOT NULL';
+          rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${name} ${origType} ${nullability}`);
+          notes.push(`Column ${name} will be ALTERED`);
+        } else {
+          notes.push(`Column ${name} will be ALTERED (no original type available for rollback)`);
+        }
+      } else {
+        notes.push(`Could not parse ALTER COLUMN: ${c}`);
+      }
+    }
+  }
+
+  return { impl: implParts.join('\n') || '-- No implementation', rollback: rollbackParts.join('\n') || '-- No rollback', notes };
+}
+
+// POST /ddl/apply - execute provided implementation script (single batch)
+app.post('/ddl/apply', express.json(), async (req, res) => {
+  const { env, script } = req.body || {};
+  if (!env || !script) return res.status(400).json({ success: false, message: 'env and script required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  try {
+    const dryRun = (req.query && req.query.dryRun === 'true') || (req.body && req.body.dryRun === true);
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    const execScript = dryRun ? (`SET NOEXEC ON;\n${script}\nSET NOEXEC OFF;`) : script;
+    const result = await pool.request().batch(execScript);
+    if (created) await pool.close();
+    // write audit
+  // gather optional metadata
+  const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
+  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!dryRun, success: true, rowsAffected: result.rowsAffected, scriptPreview: script.substring(0, 1000) }, meta));
+    return res.json({ success: true, dryRun: !!dryRun, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    // audit failure
+  const metaErr = { user: req.body && req.body.user || req.headers['x-user'] || null, correlationId: req.body && req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body && req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
+  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!((req.query && req.query.dryRun === 'true') || (req.body && req.body.dryRun === true)), success: false, error: e.message, scriptPreview: (req.body && req.body.script) ? String(req.body.script).substring(0, 1000) : null }, metaErr));
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /ddl/rollback - execute provided rollback script
+app.post('/ddl/rollback', express.json(), async (req, res) => {
+  const { env, script } = req.body || {};
+  if (!env || !script) return res.status(400).json({ success: false, message: 'env and script required' });
+  if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  try {
+    const dryRun = (req.query && req.query.dryRun === 'true') || (req.body && req.body.dryRun === true);
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
+    const execScript = dryRun ? (`SET NOEXEC ON;\n${script}\nSET NOEXEC OFF;`) : script;
+    const result = await pool.request().batch(execScript);
+    if (created) await pool.close();
+  const metaRb = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
+  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!dryRun, success: true, rowsAffected: result.rowsAffected, scriptPreview: script.substring(0, 1000) }, metaRb));
+    return res.json({ success: true, dryRun: !!dryRun, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    const metaRbErr = { user: req.body && req.body.user || req.headers['x-user'] || null, correlationId: req.body && req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body && req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
+    writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!((req.query && req.query.dryRun === 'true') || (req.body && req.body.dryRun === true)), success: false, error: e.message, scriptPreview: (req.body && req.body.script) ? String(req.body.script).substring(0, 1000) : null }, metaRbErr));
+    
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Query DB-backed audit with optional filters: env, action, since, until, top
+app.get('/audit/db', async (req, res) => {
+  const { env, action, since, until, top } = req.query || {};
+  // requires at least one environment to be specified (we'll default to DEV if not provided)
+  const targetEnv = env || 'DEV';
+  if (!sqlConfigs[targetEnv]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+  try {
+    let pool = pools[targetEnv];
+    let created = false;
+    if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[targetEnv]); await pool.connect(); created = true; }
+    const clauses = [];
+    if (action) clauses.push('[action]=@action');
+    if (since) clauses.push('[timestamp] >= @since');
+    if (until) clauses.push('[timestamp] <= @until');
+    const where = clauses.length ? ('WHERE ' + clauses.join(' AND ')) : '';
+    const qTop = top ? `TOP (${parseInt(top)||200})` : 'TOP (200)';
+    const q = `SELECT ${qTop} * FROM dbo.ddl_audit ${where} ORDER BY id DESC`;
+    const reqq = pool.request();
+    if (action) reqq.input('action', sql.NVarChar(50), action);
+    if (since) reqq.input('since', sql.DateTime2, new Date(since));
+    if (until) reqq.input('until', sql.DateTime2, new Date(until));
+    const r = await reqq.query(q);
+    if (created) await pool.close();
+    return res.json({ success: true, rows: r.recordset });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Client-submitted audit logging endpoint (best-effort): POST /audit/log
+app.post('/audit/log', express.json(), async (req, res) => {
+  const entry = req.body || {};
+  if (!entry || typeof entry !== 'object') return res.status(400).json({ success: false, message: 'Invalid audit entry' });
+  try {
+    // ensure timestamp
+    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
+    // write to file and attempt DB write (fire-and-forget inside writeAudit)
+    await writeAudit(entry);
+    // best-effort DB write but do not block response
+    writeAuditDb(entry).catch(() => {});
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
