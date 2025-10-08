@@ -106,3 +106,4 @@
 {"timestamp":"2025-10-08T19:18:29.061Z","action":"rollback","env":"TEST","dryRun":false,"success":true,"rowsAffected":[],"scriptPreview":"-- No rollback generated","user":null,"correlationId":null,"gitCommit":null,"clientIp":"::1"}
 {"timestamp":"2025-10-08T19:19:39.568Z","action":"apply","env":"TEST","dryRun":true,"success":true,"rowsAffected":[],"scriptPreview":"-- No changes detected","user":null,"correlationId":null,"gitCommit":null,"clientIp":"::1"}
 {"timestamp":"2025-10-08T19:19:41.940Z","action":"rollback","env":"TEST","dryRun":true,"success":true,"rowsAffected":[],"scriptPreview":"-- No rollback generated","user":null,"correlationId":null,"gitCommit":null,"clientIp":"::1"}
+{"timestamp":"2025-10-08T19:34:14.910Z","action":"apply","env":"TEST","dryRun":false,"success":true,"rowsAffected":[],"scriptPreview":"-- No changes detected\n\n-- No changes detected","user":null,"correlationId":null,"gitCommit":null,"clientIp":"::1"}

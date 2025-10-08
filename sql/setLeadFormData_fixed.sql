@@ -1,10 +1,32 @@
 -- Fixed version of dbo.setLeadFormData
 -- Uses a single RETURN at the end and sets @retVal in TRY/CATCH
 
-IF OBJECT_ID('dbo.setLeadFormData', 'P') IS NOT NULL
+-- Try to drop existing procedure; suppress "does not exist" error (3701)
+BEGIN TRY
+  IF OBJECT_ID('dbo.setLeadFormData','P') IS NOT NULL
+  BEGIN
     DROP PROCEDURE dbo.setLeadFormData;
-GO
+    PRINT 'Dropped existing procedure dbo.setLeadFormData.';
+  END
+  ELSE
+  BEGIN
+    PRINT 'No existing procedure dbo.setLeadFormData found; nothing to drop.';
+  END
+END TRY
+BEGIN CATCH
+  -- ignore "Cannot drop the procedure '%.*ls', because it does not exist or you do not have permission." (error 3701)
+  IF ERROR_NUMBER() <> 3701
+  BEGIN
+    THROW; -- rethrow unexpected errors
+  END
+  ELSE
+  BEGIN
+    PRINT 'DROP attempted but procedure did not exist (3701).';
+  END
+END CATCH
 
+-- Create procedure via dynamic SQL so the script can run without requiring GO separators
+DECLARE @procSql NVARCHAR(MAX) = N'
 CREATE PROCEDURE [dbo].[setLeadFormData]
 (
   @FirstName nvarchar(128),
@@ -44,8 +66,8 @@ BEGIN
     @prevStatus nvarchar(25);
 
   -- defaults
-  IF @Status IS NULL SET @Status = 'New';
-  IF @SiteType IS NULL SET @SiteType = 'D';
+  IF @Status IS NULL SET @Status = ''New'';
+  IF @SiteType IS NULL SET @SiteType = ''D'';
 
   BEGIN TRY
     INSERT INTO [dbo].[LeadForm]
@@ -60,9 +82,9 @@ BEGIN
       @FirstName, @LastName, @Email, @CellPhone, @ReferralInfo, @PortalData, @UTM,
       @SiteType, @Country, @Language, @PCID, @Location, @Assigned, @Status,
       @Internal_Comment, @BestContactTime, @Interest, @Lead_Comment, @Closed_None_Result,
-      CASE WHEN @Status = 'Open' THEN GETDATE() ELSE NULL END,
-      CASE WHEN @Status = 'Pending' THEN GETDATE() ELSE NULL END,
-      CASE WHEN @Status = 'Closed' THEN GETDATE() ELSE NULL END,
+      CASE WHEN @Status = ''Open'' THEN GETDATE() ELSE NULL END,
+      CASE WHEN @Status = ''Pending'' THEN GETDATE() ELSE NULL END,
+      CASE WHEN @Status = ''Closed'' THEN GETDATE() ELSE NULL END,
       @UTM_Source, @UTM_Medium, @UTM_Campaign, @UTM_Content, @UTM_Term;
 
     -- success
@@ -71,14 +93,14 @@ BEGIN
   BEGIN CATCH
     SELECT
       @TextOut =
-        'Server: ' + @@SERVERNAME + CHAR(13) +
-        'DB: ' + DB_NAME() + CHAR(13) +
-        'ErrorProcedure: ' + ISNULL(ERROR_PROCEDURE(), '') + CHAR(13) +
-        'ErrorNumber: ' + CAST(ERROR_NUMBER() AS VARCHAR(255)) + CHAR(13) +
-        'ErrorSeverity: ' + CAST(ERROR_SEVERITY() AS VARCHAR(255)) + CHAR(13) +
-        'ErrorState: ' + CAST(ERROR_STATE() AS VARCHAR(255)) + CHAR(13) +
-        'ErrorLine: ' + CAST(ERROR_LINE() AS VARCHAR(255)) + CHAR(13) +
-        'ErrorMessage: ' + ISNULL(ERROR_MESSAGE(), '');
+        ''Server: '' + @@SERVERNAME + CHAR(13) +
+        ''DB: '' + DB_NAME() + CHAR(13) +
+        ''ErrorProcedure: '' + ISNULL(ERROR_PROCEDURE(), '''') + CHAR(13) +
+        ''ErrorNumber: '' + CAST(ERROR_NUMBER() AS VARCHAR(255)) + CHAR(13) +
+        ''ErrorSeverity: '' + CAST(ERROR_SEVERITY() AS VARCHAR(255)) + CHAR(13) +
+        ''ErrorState: '' + CAST(ERROR_STATE() AS VARCHAR(255)) + CHAR(13) +
+        ''ErrorLine: '' + CAST(ERROR_LINE() AS VARCHAR(255)) + CHAR(13) +
+        ''ErrorMessage: '' + ISNULL(ERROR_MESSAGE(), '''');
 
     IF @@TRANCOUNT > 0
       ROLLBACK TRANSACTION;
@@ -90,5 +112,6 @@ BEGIN
 
   -- single return at end
   RETURN @retVal;
-END;
-GO
+END;';
+
+EXEC sp_executesql @procSql;
