@@ -1,5 +1,5 @@
--- Fixed version of dbo.setLeadFormData
--- Uses a single RETURN at the end and sets @retVal in TRY/CATCH
+-- Test the fixed setLeadFormData procedure
+PRINT 'Starting test execution of fixed setLeadFormData...';
 
 -- Try to drop existing procedure; suppress "does not exist" error (3701)
 BEGIN TRY
@@ -115,3 +115,11 @@ BEGIN
 END;';
 
 EXEC sp_executesql @procSql;
+
+PRINT 'Procedure creation completed. Checking if procedure exists...';
+
+-- Verify the procedure was created
+IF OBJECT_ID('dbo.setLeadFormData', 'P') IS NOT NULL
+  PRINT 'SUCCESS: dbo.setLeadFormData procedure created successfully!';
+ELSE
+  PRINT 'ERROR: dbo.setLeadFormData procedure was not created.';

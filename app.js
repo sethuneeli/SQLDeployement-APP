@@ -634,7 +634,13 @@ async function getCreateTableScript(env, schema, table) {
     let type = c.type;
     const t = type.toLowerCase();
     if (['varchar','nvarchar','varbinary','char','nchar'].includes(t)) {
-      if (c.max_length === -1) type = `${type}(MAX)`; else type = `${type}(${c.max_length})`;
+      if (c.max_length === -1) {
+        type = `${type}(MAX)`;
+      } else {
+        // For nvarchar/nchar, SQL Server stores length in bytes, so divide by 2 for character count
+        const displayLength = (t === 'nvarchar' || t === 'nchar') ? c.max_length / 2 : c.max_length;
+        type = `${type}(${displayLength})`;
+      }
     } else if (t === 'decimal' || t === 'numeric') {
       type = `${type}(${c.precision || 18},${c.scale || 0})`;
     }
@@ -765,29 +771,101 @@ app.post('/ddl/diff', express.json(), async (req, res) => {
       const objType = (o.type || 'TABLE').toUpperCase();
       if (!name) { plans.push({ schema, name: null, type: objType, error: 'Invalid object name', implementation: '--', rollback: '--' }); continue; }
 
-      // for TABLEs, use existing create->plan flow
+      // for TABLEs, use enhanced diff-aware planning
       if (objType === 'TABLE') {
-        const s = await getCreateTableScript(fromEnv, schema, name);
-        const fullScript = s.create + '\n' + (s.extras || '');
-        const parsedCreates = parseCreateTables(fullScript);
-        if (!parsedCreates || parsedCreates.length === 0) {
-          plans.push({ schema, name, type: 'TABLE', error: 'Could not parse CREATE from source', implementation: '--', rollback: '--' });
-          continue;
-        }
-        const parsed = parsedCreates[0];
-        const p = await planCreateTable(toEnv, parsed);
-        // build diff summary by comparing columns from source and target
         let diffSummary = { added: [], removed: [], altered: [] };
+        let implementation = '';
+        let rollback = '';
+        let notes = [];
+
         try {
           const srcCols = await getDbColumns(fromEnv, schema, name);
           const tgtCols = await getDbColumns(toEnv, schema, name);
-          const srcMap = {}; srcCols.forEach(c => srcMap[c.name.toLowerCase()] = c);
-          const tgtMap = {}; tgtCols.forEach(c => tgtMap[c.name.toLowerCase()] = c);
-          Object.keys(srcMap).forEach(n => { if (!tgtMap[n]) diffSummary.added.push(srcMap[n].name); });
-          Object.keys(tgtMap).forEach(n => { if (!srcMap[n]) diffSummary.removed.push(tgtMap[n].name); });
-          Object.keys(srcMap).forEach(n => { if (tgtMap[n]) { const sC = srcMap[n]; const tC = tgtMap[n]; const sSig = `${sC.type}|${sC.max_length}|${sC.precision}|${sC.scale}|${sC.is_nullable}|${sC.is_computed? '1':''}`; const tSig = `${tC.type}|${tC.max_length}|${tC.precision}|${tC.scale}|${tC.is_nullable}|${tC.is_computed? '1':''}`; if (sSig !== tSig) diffSummary.altered.push({ column: sC.name, from: sSig, to: tSig }); } });
-        } catch (e) {}
-        plans.push({ schema, name, type: 'TABLE', implementation: p.impl, rollback: p.rollback, notes: p.notes, diffSummary });
+          
+          if (tgtCols.length === 0) {
+            // Table doesn't exist in target, create it
+            const s = await getCreateTableScript(fromEnv, schema, name);
+            implementation = s.create + '\n' + (s.extras || '');
+            rollback = `DROP TABLE [${schema}].[${name}]`;
+            notes.push('Table does not exist in target; create and drop generated');
+            diffSummary.added = srcCols.map(c => c.name);
+          } else {
+            // Table exists, generate ALTER statements based on differences
+            const srcMap = {}; srcCols.forEach(c => srcMap[c.name.toLowerCase()] = c);
+            const tgtMap = {}; tgtCols.forEach(c => tgtMap[c.name.toLowerCase()] = c);
+            
+            const implParts = [];
+            const rollbackParts = [];
+            
+            // Columns in source but not in target will be ADDED to target
+            Object.keys(srcMap).forEach(n => { 
+              if (!tgtMap[n]) {
+                const srcCol = srcMap[n];
+                diffSummary.added.push(srcCol.name);
+                const colDef = buildColumnDefinition(srcCol);
+                implParts.push(`ALTER TABLE [${schema}].[${name}] ADD [${srcCol.name}] ${colDef}`);
+                rollbackParts.unshift(`ALTER TABLE [${schema}].[${name}] DROP COLUMN [${srcCol.name}]`);
+                notes.push(`Column ${srcCol.name} will be ADDED`);
+              }
+            });
+            
+            // Columns in target but not in source will be REMOVED from target
+            Object.keys(tgtMap).forEach(n => { 
+              if (!srcMap[n]) {
+                const tgtCol = tgtMap[n];
+                diffSummary.removed.push(tgtCol.name);
+                implParts.push(`ALTER TABLE [${schema}].[${name}] DROP COLUMN [${tgtCol.name}]`);
+                const origColDef = buildColumnDefinition(tgtCol);
+                rollbackParts.unshift(`ALTER TABLE [${schema}].[${name}] ADD [${tgtCol.name}] ${origColDef}`);
+                notes.push(`Column ${tgtCol.name} will be DROPPED`);
+              }
+            });
+            
+            // Columns that exist in both but have different signatures will be ALTERED
+            Object.keys(srcMap).forEach(n => { 
+              if (tgtMap[n]) { 
+                const sC = srcMap[n]; 
+                const tC = tgtMap[n]; 
+                const sSig = `${sC.type}|${sC.max_length}|${sC.precision}|${sC.scale}|${sC.is_nullable}|${sC.is_computed? '1':''}`;
+                const tSig = `${tC.type}|${tC.max_length}|${tC.precision}|${tC.scale}|${tC.is_nullable}|${tC.is_computed? '1':''}`;
+                if (sSig !== tSig) {
+                  // Build human-readable type descriptions for better diff display
+                  const sType = buildColumnTypeDescription(sC);
+                  const tType = buildColumnTypeDescription(tC);
+                  diffSummary.altered.push({ 
+                    column: sC.name, 
+                    from: tType, 
+                    to: sType,
+                    fromSig: tSig,
+                    toSig: sSig 
+                  });
+                  
+                  // Generate ALTER COLUMN statement
+                  const srcColDef = buildColumnDefinition(sC);
+                  const tgtColDef = buildColumnDefinition(tC);
+                  implParts.push(`ALTER TABLE [${schema}].[${name}] ALTER COLUMN [${sC.name}] ${srcColDef}`);
+                  rollbackParts.unshift(`ALTER TABLE [${schema}].[${name}] ALTER COLUMN [${sC.name}] ${tgtColDef}`);
+                  notes.push(`Column ${sC.name} will be ALTERED: ${tType} → ${sType}`);
+                }
+              } 
+            });
+            
+            implementation = implParts.join('\n');
+            rollback = rollbackParts.join('\n');
+            
+            if (implParts.length === 0) {
+              implementation = '-- No changes required';
+              rollback = '-- No rollback needed';
+              notes.push('No differences detected');
+            }
+          }
+        } catch (e) {
+          implementation = `-- Error analyzing table: ${e.message}`;
+          rollback = '-- Error during analysis';
+          notes.push(`Error: ${e.message}`);
+        }
+
+        plans.push({ schema, name, type: 'TABLE', implementation, rollback, notes, diffSummary });
         continue;
       }
 
@@ -827,9 +905,9 @@ app.post('/ddl/diff', express.json(), async (req, res) => {
         plans.push({ schema, name, type: objType, error: e.message, implementation: '--', rollback: '--' });
       }
     }
-    // combined scripts
-    const combinedImpl = plans.map(p => p.implementation).join('\n\n');
-    const combinedRollback = plans.map(p => p.rollback).reverse().join('\n\n');
+    // combined scripts with proper batch separators
+    const combinedImpl = plans.map(p => p.implementation).filter(impl => impl && impl.trim() !== '--').join('\nGO\n\n') + (plans.some(p => p.implementation && p.implementation.trim() !== '--') ? '\nGO' : '');
+    const combinedRollback = plans.map(p => p.rollback).filter(rb => rb && rb.trim() !== '--').reverse().join('\nGO\n\n') + (plans.some(p => p.rollback && p.rollback.trim() !== '--') ? '\nGO' : '');
 
     // build dependency graph for topological order (best-effort)
     const nameKey = p => (p.type || 'TABLE') + '::' + (p.schema || '') + '::' + (p.name || '');
@@ -926,7 +1004,81 @@ async function getTableMetadataSql(env, schema, table) {
 function dbColumnSignature(col) {
   if (!col) return '';
   let type = col.type;
-  return `${col.name} ${col.type}${col.max_length? '('+col.max_length+')':''} ${col.is_nullable ? 'NULL' : 'NOT NULL'}`;
+  if (col.max_length && col.max_length > 0) {
+    // For nvarchar/nchar, SQL Server stores length in bytes, so divide by 2 for character count
+    const displayLength = (col.type.toLowerCase() === 'nvarchar' || col.type.toLowerCase() === 'nchar') ? col.max_length / 2 : col.max_length;
+    type += `(${displayLength})`;
+  }
+  return `${col.name} ${type} ${col.is_nullable ? 'NULL' : 'NOT NULL'}`;
+}
+
+// build human-readable column type description for diff display
+function buildColumnTypeDescription(col) {
+  if (!col) return '';
+  let typeDesc = col.type;
+  
+  // Add length/precision for applicable types
+  if (col.type && (col.type.toLowerCase().includes('varchar') || col.type.toLowerCase().includes('char'))) {
+    if (col.max_length && col.max_length > 0) {
+      if (col.max_length === -1) {
+        typeDesc += '(MAX)';
+      } else {
+        // For nvarchar/nchar, SQL Server stores length in bytes, so divide by 2 for character count
+        const charLength = col.type.toLowerCase().startsWith('n') ? col.max_length / 2 : col.max_length;
+        typeDesc += `(${charLength})`;
+      }
+    }
+  } else if (col.type && (col.type.toLowerCase().includes('decimal') || col.type.toLowerCase().includes('numeric'))) {
+    if (col.precision !== undefined && col.scale !== undefined) {
+      typeDesc += `(${col.precision},${col.scale})`;
+    }
+  } else if (col.type && col.type.toLowerCase().includes('float')) {
+    if (col.precision !== undefined && col.precision > 0) {
+      typeDesc += `(${col.precision})`;
+    }
+  }
+  
+  // Add NULL/NOT NULL
+  typeDesc += col.is_nullable ? ' NULL' : ' NOT NULL';
+  
+  return typeDesc;
+}
+
+// build complete column definition for CREATE/ALTER statements
+function buildColumnDefinition(col) {
+  if (!col) return '';
+  let typeDef = col.type;
+  
+  // Add length/precision for applicable types
+  if (col.type && (col.type.toLowerCase().includes('varchar') || col.type.toLowerCase().includes('char'))) {
+    if (col.max_length && col.max_length > 0) {
+      if (col.max_length === -1) {
+        typeDef += '(MAX)';
+      } else {
+        // For nvarchar/nchar, SQL Server stores length in bytes, so divide by 2 for character count
+        const charLength = col.type.toLowerCase().startsWith('n') ? col.max_length / 2 : col.max_length;
+        typeDef += `(${charLength})`;
+      }
+    }
+  } else if (col.type && (col.type.toLowerCase().includes('decimal') || col.type.toLowerCase().includes('numeric'))) {
+    if (col.precision !== undefined && col.scale !== undefined) {
+      typeDef += `(${col.precision},${col.scale})`;
+    }
+  } else if (col.type && col.type.toLowerCase().includes('float')) {
+    if (col.precision !== undefined && col.precision > 0) {
+      typeDef += `(${col.precision})`;
+    }
+  }
+  
+  // Add NULL/NOT NULL
+  typeDef += col.is_nullable ? ' NULL' : ' NOT NULL';
+  
+  // Add default if present
+  if (col.default_definition) {
+    typeDef += ` DEFAULT ${col.default_definition}`;
+  }
+  
+  return typeDef;
 }
 
 // create implementation and rollback scripts for CREATE TABLE statements
@@ -982,7 +1134,14 @@ async function planCreateTable(env, tbl) {
         // type likely changed
         implParts.push(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${p.name} ${p.def}`);
         // rollback: attempt to restore original type
-        const origType = db.type + (db.max_length && db.max_length > 0 ? `(${db.max_length})` : (db.precision? `(${db.precision},${db.scale})`: ''));
+        let origType = db.type;
+        if (db.max_length && db.max_length > 0) {
+          // For nvarchar/nchar, SQL Server stores length in bytes, so divide by 2 for character count
+          const displayLength = (db.type.toLowerCase() === 'nvarchar' || db.type.toLowerCase() === 'nchar') ? db.max_length / 2 : db.max_length;
+          origType += `(${displayLength})`;
+        } else if (db.precision) {
+          origType += `(${db.precision},${db.scale || 0})`;
+        }
         const nullability = db.is_nullable ? 'NULL' : 'NOT NULL';
         rollbackParts.unshift(`ALTER TABLE [${schema}].[${table}] ALTER COLUMN ${p.name} ${origType} ${nullability}`);
         notes.push(`Column ${name} will be ALTERED (type/definition differs)`);
@@ -1137,14 +1296,30 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
     let pool = pools[env];
     let created = false;
     if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
-    const execScript = dryRun ? (`SET NOEXEC ON;\n${script}\nSET NOEXEC OFF;`) : script;
-    const result = await pool.request().batch(execScript);
+    
+    // Split script by GO statements and execute each batch separately
+    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
+    let totalRowsAffected = 0;
+    let lastResult = null;
+    
+    for (const batch of batches) {
+      const trimmedBatch = batch.trim();
+      if (!trimmedBatch) continue;
+      
+      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
+      const result = await pool.request().batch(execScript);
+      lastResult = result;
+      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
+        totalRowsAffected += result.rowsAffected;
+      }
+    }
+    
     if (created) await pool.close();
     // write audit
   // gather optional metadata
   const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
-  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!dryRun, success: true, rowsAffected: result.rowsAffected, scriptPreview: script.substring(0, 1000) }, meta));
-    return res.json({ success: true, dryRun: !!dryRun, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!dryRun, success: true, rowsAffected: totalRowsAffected, scriptPreview: script.substring(0, 1000) }, meta));
+    return res.json({ success: true, dryRun: !!dryRun, recordset: lastResult?.recordset, rowsAffected: totalRowsAffected });
   } catch (e) {
     // audit failure
   const metaErr = { user: req.body && req.body.user || req.headers['x-user'] || null, correlationId: req.body && req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body && req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
@@ -1163,12 +1338,28 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
     let pool = pools[env];
     let created = false;
     if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
-    const execScript = dryRun ? (`SET NOEXEC ON;\n${script}\nSET NOEXEC OFF;`) : script;
-    const result = await pool.request().batch(execScript);
+    
+    // Split script by GO statements and execute each batch separately
+    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
+    let totalRowsAffected = 0;
+    let lastResult = null;
+    
+    for (const batch of batches) {
+      const trimmedBatch = batch.trim();
+      if (!trimmedBatch) continue;
+      
+      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
+      const result = await pool.request().batch(execScript);
+      lastResult = result;
+      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
+        totalRowsAffected += result.rowsAffected;
+      }
+    }
+    
     if (created) await pool.close();
   const metaRb = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
-  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!dryRun, success: true, rowsAffected: result.rowsAffected, scriptPreview: script.substring(0, 1000) }, metaRb));
-    return res.json({ success: true, dryRun: !!dryRun, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!dryRun, success: true, rowsAffected: totalRowsAffected, scriptPreview: script.substring(0, 1000) }, metaRb));
+    return res.json({ success: true, dryRun: !!dryRun, recordset: lastResult?.recordset, rowsAffected: totalRowsAffected });
   } catch (e) {
     const metaRbErr = { user: req.body && req.body.user || req.headers['x-user'] || null, correlationId: req.body && req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body && req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
     writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!((req.query && req.query.dryRun === 'true') || (req.body && req.body.dryRun === true)), success: false, error: e.message, scriptPreview: (req.body && req.body.script) ? String(req.body.script).substring(0, 1000) : null }, metaRbErr));

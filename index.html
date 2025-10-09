@@ -1273,15 +1273,113 @@
         if (!json.success) { planDiv.innerHTML = '<pre>' + JSON.stringify(json, null, 2) + '</pre>'; return; }
         // show plans
         const htmlParts = [];
-        json.plans.forEach(p => {
+        json.plans.forEach((p, index) => {
           const ds = p.diffSummary || { added: [], removed: [], altered: [] };
-          const dsHtml = `<div style="margin-top:6px;font-size:0.95em"><strong>Diff Summary:</strong><div>Added: ${ds.added && ds.added.length ? ds.added.join(', ') : '(none)'}</div><div>Removed: ${ds.removed && ds.removed.length ? ds.removed.join(', ') : '(none)'}</div><div>Altered: ${(ds.altered && ds.altered.length)? ds.altered.map(a=>a.column).join(', '): '(none)'}</div></div>`;
+          
+          // Build enhanced altered display showing from → to changes
+          let alteredDisplay = '(none)';
+          if (ds.altered && ds.altered.length) {
+            alteredDisplay = ds.altered.map(a => {
+              if (a.from && a.to) {
+                return `${a.column}: ${a.from} → ${a.to}`;
+              } else {
+                return a.column;
+              }
+            }).join(', ');
+          }
+          
+          const dsHtml = `<div style="margin-top:6px;font-size:0.95em">
+            <strong>Diff Summary:</strong>
+            <div>Added: ${ds.added && ds.added.length ? ds.added.join(', ') : '(none)'}</div>
+            <div>Removed: ${ds.removed && ds.removed.length ? ds.removed.join(', ') : '(none)'}</div>
+            <div>Altered: ${alteredDisplay}</div>
+          </div>`;
           const displayName = `${p.schema}.${(p.name || p.table || '')}`;
-          htmlParts.push(`<div style="padding:8px;border-bottom:1px solid #f3f3f3"><strong>${displayName}</strong>${dsHtml}<pre style="white-space:pre-wrap">Implementation:\n${p.implementation || '--'}\n\nRollback:\n${p.rollback || '--'}\n\nNotes:\n${(p.notes||[]).join('\n')}</pre></div>`);
+          const implId = `impl_${index}`;
+          const rollbackId = `rollback_${index}`;
+          const copyImplId = `copy_impl_${index}`;
+          const copyRollbackId = `copy_rollback_${index}`;
+          
+          htmlParts.push(`<div style="padding:8px;border-bottom:1px solid #f3f3f3">
+            <strong>${displayName}</strong>
+            ${dsHtml}
+            <div style="margin-top:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <strong>Implementation:</strong>
+                <button id="${copyImplId}" class="btn-export" style="padding:4px 8px;font-size:0.8em">Copy Implementation</button>
+              </div>
+              <pre id="${implId}" style="white-space:pre-wrap;background:#f8f8f8;padding:8px;border-radius:4px">${p.implementation || '--'}</pre>
+              
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;margin-top:12px">
+                <strong>Rollback:</strong>
+                <button id="${copyRollbackId}" class="btn-export-alt" style="padding:4px 8px;font-size:0.8em">Copy Rollback</button>
+              </div>
+              <pre id="${rollbackId}" style="white-space:pre-wrap;background:#f8f8f8;padding:8px;border-radius:4px">${p.rollback || '--'}</pre>
+              
+              <div style="margin-top:8px"><strong>Notes:</strong><br>${(p.notes||[]).join('<br>')}</div>
+            </div>
+          </div>`);
         });
   const applyOrderHtml = json.applyOrder && json.applyOrder.length ? `<div style="margin-bottom:8px"><strong>Apply Order:</strong> ${json.applyOrder.map(o=> ((o.type? o.type + ' ':'') + (o.schema||'') + '.' + (o.name||o.table||''))).join(' → ')}</div>` : '';
-  const combinedHtml = `${applyOrderHtml}<h4>Combined Implementation</h4><pre style="white-space:pre-wrap">${json.combinedImpl || '--'}</pre><h4>Combined Rollback</h4><pre style="white-space:pre-wrap">${json.combinedRollback || '--'}</pre>`;
+  
+  const combinedHtml = `${applyOrderHtml}
+    <div style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <h4 style="margin:0">Combined Implementation</h4>
+        <button id="copyCombinedImpl" class="btn-export" style="padding:6px 12px">Copy Combined Implementation</button>
+      </div>
+      <pre id="combinedImplText" style="white-space:pre-wrap;background:#f0f8ff;padding:12px;border-radius:6px;border:1px solid #ddeeff">${json.combinedImpl || '--'}</pre>
+      
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;margin-top:16px">
+        <h4 style="margin:0">Combined Rollback</h4>
+        <button id="copyCombinedRollback" class="btn-export-alt" style="padding:6px 12px">Copy Combined Rollback</button>
+      </div>
+      <pre id="combinedRollbackText" style="white-space:pre-wrap;background:#fff8f0;padding:12px;border-radius:6px;border:1px solid #ffeecc">${json.combinedRollback || '--'}</pre>
+    </div>`;
+  
   planDiv.innerHTML = htmlParts.join('') + combinedHtml;
+
+        // Wire up copy event handlers for individual plans
+        json.plans.forEach((p, index) => {
+          const copyImplBtn = document.getElementById(`copy_impl_${index}`);
+          const copyRollbackBtn = document.getElementById(`copy_rollback_${index}`);
+          
+          if (copyImplBtn) {
+            copyImplBtn.addEventListener('click', async () => {
+              await copyToClipboard(p.implementation || '');
+              copyImplBtn.textContent = 'Copied!';
+              setTimeout(() => copyImplBtn.textContent = 'Copy Implementation', 1500);
+            });
+          }
+          
+          if (copyRollbackBtn) {
+            copyRollbackBtn.addEventListener('click', async () => {
+              await copyToClipboard(p.rollback || '');
+              copyRollbackBtn.textContent = 'Copied!';
+              setTimeout(() => copyRollbackBtn.textContent = 'Copy Rollback', 1500);
+            });
+          }
+        });
+
+        // Wire up copy event handlers for combined scripts
+        const copyCombinedImplBtn = document.getElementById('copyCombinedImpl');
+        const copyCombinedRollbackBtn = document.getElementById('copyCombinedRollback');
+        
+        if (copyCombinedImplBtn) {
+          copyCombinedImplBtn.addEventListener('click', async () => {
+            await copyToClipboard(json.combinedImpl || '');
+            copyCombinedImplBtn.textContent = 'Copied!';
+            setTimeout(() => copyCombinedImplBtn.textContent = 'Copy Combined Implementation', 1500);
+          });
+        }
+        
+        if (copyCombinedRollbackBtn) {
+          copyCombinedRollbackBtn.addEventListener('click', async () => {
+            await copyToClipboard(json.combinedRollback || '');
+            copyCombinedRollbackBtn.textContent = 'Copied!';
+            setTimeout(() => copyCombinedRollbackBtn.textContent = 'Copy Combined Rollback', 1500);
+          });
+        }
 
         // add validate/apply/rollback controls
         const controls = document.createElement('div'); controls.style.marginTop = '8px';
