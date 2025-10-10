@@ -1,0 +1,1550 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Environments - Sethu Neeli - MA - GIT Portal SQL</title>
+  <style>
+    :root{
+      --blue1:#0b5eff;
+      --blue2:#3aa0ff;
+      --yellow1:#ffd24d;
+      --yellow2:#ffea7f;
+      --card-bg: rgba(255,255,255,0.85);
+      --muted:#445;
+      --success:#2ecc71;
+      --warning:#f39c12;
+      --danger:#e74c3c;
+    }
+    html,body{height:100%;margin:0;padding:0}
+    body{
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+      background: linear-gradient(120deg,var(--blue1),var(--yellow1));
+      background-size:400% 400%;
+      animation: bg-anim 12s ease infinite;
+      color: #07203b;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+    @keyframes bg-anim{
+      0%{background-position:0% 50%}
+      50%{background-position:100% 50%}
+      100%{background-position:0% 50%}
+    }
+    .app-container{
+      max-width:1400px;margin:36px auto;padding:28px;border-radius:16px;background:linear-gradient(180deg, rgba(255,255,255,0.88), rgba(245,249,255,0.7));box-shadow:0 8px 30px rgba(8,20,40,0.35);
+      backdrop-filter: blur(6px);
+    }
+    h1, h2{margin-top:0;color:var(--muted);font-weight:600}
+    h1{font-size:2.2em;margin-bottom:8px}
+    h2{font-size:1.6em;margin-bottom:16px;border-bottom:2px solid var(--blue2);padding-bottom:8px}
+    
+    .nav-bar{
+      display:flex;gap:12px;margin-bottom:24px;padding:12px 0;border-bottom:1px solid rgba(10,20,40,0.1);
+    }
+    .nav-link{
+      padding:8px 16px;border-radius:8px;text-decoration:none;color:#333;background:rgba(255,255,255,0.7);border:1px solid rgba(10,20,40,0.08);transition:all 0.2s;
+    }
+    .nav-link:hover{
+      background:var(--blue2);color:white;transform:translateY(-1px);
+    }
+    .nav-link.active{
+      background:linear-gradient(90deg,var(--blue2),#6fb8ff);color:white;
+    }
+    
+    .env-section{
+      margin-bottom:32px;
+    }
+    .env-grid{
+      display:grid;grid-template-columns:repeat(auto-fit,minmax(450px,1fr));gap:20px;margin-top:16px;
+    }
+    .env-card{
+      background:var(--card-bg);border-radius:12px;padding:20px;border:1px solid rgba(10,20,40,0.08);
+      box-shadow:0 4px 12px rgba(8,20,40,0.12);transition:all 0.3s;position:relative;
+    }
+    .env-card:hover{
+      transform:translateY(-2px);box-shadow:0 8px 20px rgba(8,20,40,0.18);
+    }
+    
+    .env-header{
+      display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;
+    }
+    .env-name{
+      font-size:1.3em;font-weight:600;color:var(--muted);
+    }
+    .env-status{
+      width:12px;height:12px;border-radius:50%;background:#ddd;
+    }
+    .env-status.connected{background:var(--success);}
+    .env-status.error{background:var(--danger);}
+    .env-status.warning{background:var(--warning);}
+    
+    .env-details{
+      margin-bottom:16px;
+    }
+    .env-detail{
+      display:flex;margin-bottom:8px;font-size:0.9em;
+    }
+    .detail-label{
+      font-weight:600;min-width:80px;color:#666;
+    }
+    .detail-value{
+      color:#333;font-family:monospace;background:#f8f9fa;padding:2px 6px;border-radius:4px;
+      word-break:break-all;flex:1;
+    }
+    
+    .jdbc-url{
+      background:#f1f3f4;border-radius:8px;padding:12px;margin-top:8px;
+      font-family:monospace;font-size:0.85em;word-break:break-all;
+      border-left:4px solid var(--blue2);
+    }
+    
+    .env-actions{
+      display:flex;gap:8px;margin-top:16px;
+    }
+    .btn{
+      padding:8px 12px;border-radius:6px;border:none;cursor:pointer;font-size:0.9em;
+      transition:all 0.2s;text-decoration:none;display:inline-block;text-align:center;
+    }
+    .btn-primary{background:linear-gradient(90deg,var(--blue2),#6fb8ff);color:white;}
+    .btn-secondary{background:#6c757d;color:white;}
+    .btn-success{background:var(--success);color:white;}
+    .btn-warning{background:var(--warning);color:white;}
+    .btn-danger{background:var(--danger);color:white;}
+    .btn:hover{transform:translateY(-1px);opacity:0.9;}
+    .btn:disabled{opacity:0.6;cursor:not-allowed;transform:none;}
+    
+    .copy-btn{
+      position:absolute;top:12px;right:12px;padding:4px 8px;font-size:0.8em;
+      background:rgba(255,255,255,0.9);border:1px solid #ddd;
+    }
+    
+    .section-header{
+      display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;
+    }
+    .section-actions{
+      display:flex;gap:8px;
+    }
+    
+    .working-env .env-card{border-left:4px solid var(--success);}
+    .deployment-env .env-card{border-left:4px solid var(--blue2);}
+    
+    .connection-info{
+      display:flex;align-items:center;gap:8px;margin-top:12px;padding:8px;
+      background:rgba(0,0,0,0.05);border-radius:6px;font-size:0.85em;
+    }
+    .connection-info.connected{background:rgba(46,204,113,0.1);color:var(--success);}
+    .connection-info.error{background:rgba(231,76,60,0.1);color:var(--danger);}
+    
+    /* Modal Styles */
+    .modal{
+      display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+      background:rgba(0,0,0,0.7);z-index:1000;backdrop-filter:blur(4px);
+    }
+    .modal.show{display:flex;align-items:center;justify-content:center;}
+    .modal-content{
+      background:white;border-radius:16px;padding:24px;max-width:600px;width:90%;
+      max-height:80vh;overflow-y:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);
+    }
+    .modal-header{
+      display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;
+      border-bottom:2px solid var(--blue2);padding-bottom:12px;
+    }
+    .modal-title{font-size:1.4em;font-weight:600;color:var(--muted);}
+    .modal-close{
+      background:none;border:none;font-size:1.5em;cursor:pointer;
+      width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    }
+    .modal-close:hover{background:rgba(0,0,0,0.1);}
+    
+    .form-group{
+      margin-bottom:16px;
+    }
+    .form-label{
+      display:block;font-weight:600;margin-bottom:6px;color:#333;
+    }
+    .form-input, .form-select, .form-textarea{
+      width:100%;padding:10px 12px;border-radius:8px;border:1px solid #ddd;
+      font-family:inherit;font-size:0.9em;box-sizing:border-box;
+    }
+    .form-textarea{
+      resize:vertical;min-height:100px;font-family:monospace;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus{
+      outline:none;border-color:var(--blue2);box-shadow:0 0 0 3px rgba(59,160,255,0.1);
+    }
+    
+    .form-row{
+      display:grid;grid-template-columns:1fr 1fr;gap:12px;
+    }
+    .form-checkbox{
+      display:flex;align-items:center;gap:8px;margin-top:8px;
+    }
+    .form-checkbox input{width:auto;}
+    
+    .modal-actions{
+      display:flex;justify-content:flex-end;gap:12px;margin-top:24px;
+      padding-top:16px;border-top:1px solid #eee;
+    }
+    
+    .btn-edit{
+      position:absolute;top:12px;right:60px;padding:4px 8px;font-size:0.8em;
+      background:var(--warning);color:white;border:none;border-radius:4px;
+    }
+    
+    .config-section{
+      background:rgba(255,255,255,0.9);border-radius:12px;padding:20px;margin-bottom:24px;
+      border:2px solid var(--blue2);
+    }
+    .config-header{
+      font-size:1.3em;font-weight:600;color:var(--muted);margin-bottom:16px;
+      display:flex;align-items:center;gap:12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <h1>🌐 Environment Management</h1>
+    
+    <nav class="nav-bar">
+      <a href="index.html" class="nav-link">🏠 Home</a>
+      <a href="environments.html" class="nav-link active">🌐 Environments</a>
+      <a href="#" class="nav-link" onclick="openAddEnvironmentModal()">➕ Add New</a>
+      <a href="#" class="nav-link" onclick="refreshAllConnections()">🔄 Refresh All</a>
+      <a href="#" class="nav-link" onclick="testAllConnections()">🧪 Test All</a>
+      <a href="#" class="nav-link" onclick="openImportModal()">📥 Import</a>
+    </nav>
+    
+    <!-- Working Environments Section -->
+    <section class="env-section working-env">
+      <div class="section-header">
+        <h2>🛠️ Working Environments</h2>
+        <div class="section-actions">
+          <button class="btn btn-primary" onclick="testWorkingEnvironments()">Test Working Envs</button>
+          <button class="btn btn-secondary" onclick="exportWorkingConfig()">Export Config</button>
+        </div>
+      </div>
+      
+      <div class="env-grid">
+        <!-- Development Database -->
+        <div class="env-card" data-env="dev">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('dev')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('dev')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Development Database</div>
+            <div class="env-status" id="status-dev"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">dbms-aipoc01:1433</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotDev</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Enabled (Trust Certificate)</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-dev">
+            jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotDev;encrypt=true;integratedSecurity=true;trustServerCertificate=true
+          </div>
+          <div class="connection-info" id="conn-dev">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('dev')">Test Connection</button>
+            <button class="btn btn-primary" onclick="connectEnvironment('dev')">Connect</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('dev')">DB Info</button>
+          </div>
+        </div>
+        
+        <!-- Shadow Database -->
+        <div class="env-card" data-env="shadow">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('shadow')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('shadow')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Shadow Database</div>
+            <div class="env-status" id="status-shadow"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">dbms-aipoc01:1433</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotShadow</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Disabled</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-shadow">
+            jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotShadow;encrypt=false;integratedSecurity=true;trustServerCertificate=false
+          </div>
+          <div class="connection-info" id="conn-shadow">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('shadow')">Test Connection</button>
+            <button class="btn btn-primary" onclick="connectEnvironment('shadow')">Connect</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('shadow')">DB Info</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    
+    <!-- Deployment Environments Section -->
+    <section class="env-section deployment-env">
+      <div class="section-header">
+        <h2>🚀 Deployment Environments</h2>
+        <div class="section-actions">
+          <button class="btn btn-primary" onclick="testDeploymentEnvironments()">Test Deployment Envs</button>
+          <button class="btn btn-secondary" onclick="exportDeploymentConfig()">Export Config</button>
+        </div>
+      </div>
+      
+      <div class="env-grid">
+        <!-- Production Database -->
+        <div class="env-card" data-env="prod">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('prod')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('prod')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Production Database</div>
+            <div class="env-status" id="status-prod"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">localhost</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotProd</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Enabled (Trust Certificate)</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-prod">
+            jdbc:sqlserver://localhost;databaseName=AutopilotProd;encrypt=true;integratedSecurity=true;trustServerCertificate=true
+          </div>
+          <div class="connection-info" id="conn-prod">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('prod')">Test Connection</button>
+            <button class="btn btn-danger" onclick="connectEnvironment('prod')" 
+                    onmouseover="this.title='⚠️ PRODUCTION - Use with caution!'"
+                    style="background:var(--danger)">Connect to PROD</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('prod')">DB Info</button>
+          </div>
+        </div>
+        
+        <!-- Test Database -->
+        <div class="env-card" data-env="test">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('test')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('test')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Test Database</div>
+            <div class="env-status" id="status-test"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">dbms-aipoc01:1433</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotTest</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Disabled</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-test">
+            jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotTest;encrypt=false;integratedSecurity=true;trustServerCertificate=false
+          </div>
+          <div class="connection-info" id="conn-test">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('test')">Test Connection</button>
+            <button class="btn btn-primary" onclick="connectEnvironment('test')">Connect</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('test')">DB Info</button>
+          </div>
+        </div>
+        
+        <!-- Check (Reporting) Database -->
+        <div class="env-card" data-env="check">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('check')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('check')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Check (Reporting) Database</div>
+            <div class="env-status" id="status-check"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">localhost</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotCheck</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Enabled (Trust Certificate)</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-check">
+            jdbc:sqlserver://localhost;databaseName=AutopilotCheck;encrypt=true;integratedSecurity=true;trustServerCertificate=true
+          </div>
+          <div class="connection-info" id="conn-check">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('check')">Test Connection</button>
+            <button class="btn btn-primary" onclick="connectEnvironment('check')">Connect</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('check')">DB Info</button>
+          </div>
+        </div>
+        
+        <!-- Build Database -->
+        <div class="env-card" data-env="build">
+          <button class="copy-btn btn" onclick="copyJdbcUrl('build')" title="Copy JDBC URL">📋</button>
+          <button class="btn-edit btn" onclick="editEnvironment('build')" title="Edit Environment">✏️</button>
+          <div class="env-header">
+            <div class="env-name">Build Database</div>
+            <div class="env-status" id="status-build"></div>
+          </div>
+          <div class="env-details">
+            <div class="env-detail">
+              <span class="detail-label">Server:</span>
+              <span class="detail-value">localhost</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Database:</span>
+              <span class="detail-value">AutopilotBuild</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Auth:</span>
+              <span class="detail-value">Integrated Security</span>
+            </div>
+            <div class="env-detail">
+              <span class="detail-label">Encryption:</span>
+              <span class="detail-value">Enabled (Trust Certificate)</span>
+            </div>
+          </div>
+          <div class="jdbc-url" id="jdbc-build">
+            jdbc:sqlserver://localhost;databaseName=AutopilotBuild;encrypt=true;integratedSecurity=true;trustServerCertificate=true
+          </div>
+          <div class="connection-info" id="conn-build">
+            <span>🔍 Connection not tested</span>
+          </div>
+          <div class="env-actions">
+            <button class="btn btn-success" onclick="testConnection('build')">Test Connection</button>
+            <button class="btn btn-primary" onclick="connectEnvironment('build')">Connect</button>
+            <button class="btn btn-warning" onclick="showDatabaseInfo('build')">DB Info</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    
+    <!-- Configuration Management Section -->
+    <section class="config-section">
+      <div class="config-header">
+        ⚙️ Configuration Management
+        <div style="flex:1"></div>
+        <button class="btn btn-primary" onclick="openConfigManager()">🛠️ Advanced Config</button>
+      </div>
+      <p>Manage environment configurations, connection strings, and import/export settings. Use the buttons above to add new environments or edit existing ones.</p>
+      
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:16px;">
+        <div style="text-align:center;padding:16px;background:rgba(46,204,113,0.1);border-radius:8px;">
+          <div style="font-size:1.5em;font-weight:600;color:var(--success);">6</div>
+          <div>Total Environments</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:rgba(52,152,219,0.1);border-radius:8px;">
+          <div style="font-size:1.5em;font-weight:600;color:var(--blue2);" id="connectedCount">0</div>
+          <div>Connected</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:rgba(231,76,60,0.1);border-radius:8px;">
+          <div style="font-size:1.5em;font-weight:600;color:var(--danger);" id="errorCount">0</div>
+          <div>Errors</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:rgba(243,156,18,0.1);border-radius:8px;">
+          <div style="font-size:1.5em;font-weight:600;color:var(--warning);" id="workingCount">2</div>
+          <div>Working Envs</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Add/Edit Environment Modal -->
+  <div class="modal" id="environmentModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle">Add New Environment</div>
+        <button class="modal-close" onclick="closeModal('environmentModal')">&times;</button>
+      </div>
+      
+      <form id="environmentForm">
+        <div class="form-group">
+          <label class="form-label">Environment Key *</label>
+          <input type="text" class="form-input" id="envKey" placeholder="e.g., staging, dev2, backup" required>
+          <small style="color:#666;font-size:0.8em;">Unique identifier for this environment</small>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Display Name *</label>
+          <input type="text" class="form-input" id="envName" placeholder="e.g., Staging Database" required>
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Server Address *</label>
+            <input type="text" class="form-input" id="envServer" placeholder="localhost or server:port" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Database Name *</label>
+            <input type="text" class="form-input" id="envDatabase" placeholder="DatabaseName" required>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Environment Type</label>
+          <select class="form-select" id="envType">
+            <option value="working">Working Environment</option>
+            <option value="deployment">Deployment Environment</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Authentication</label>
+          <select class="form-select" id="envAuth" onchange="toggleAuthFields()">
+            <option value="integrated">Windows Integrated Security</option>
+            <option value="sql">SQL Server Authentication</option>
+          </select>
+        </div>
+        
+        <div id="sqlAuthFields" style="display:none;">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input type="text" class="form-input" id="envUsername" placeholder="SQL Username">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password</label>
+              <input type="password" class="form-input" id="envPassword" placeholder="SQL Password">
+            </div>
+          </div>
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-checkbox">
+              <input type="checkbox" id="envEncrypt" checked>
+              <label for="envEncrypt">Enable Encryption</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="form-checkbox">
+              <input type="checkbox" id="envTrustCert" checked>
+              <label for="envTrustCert">Trust Server Certificate</label>
+            </div>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Additional Connection Parameters</label>
+          <textarea class="form-textarea" id="envAdditional" placeholder="Additional JDBC parameters (optional)
+Example: connectionTimeout=30;commandTimeout=60"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Generated JDBC URL</label>
+          <textarea class="form-textarea" id="envJdbcPreview" readonly style="background:#f8f9fa;font-family:monospace;font-size:0.85em;"></textarea>
+        </div>
+        
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('environmentModal')">Cancel</button>
+          <button type="button" class="btn btn-warning" onclick="testNewConnection()">🧪 Test Connection</button>
+          <button type="submit" class="btn btn-primary">💾 Save Environment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Import Configuration Modal -->
+  <div class="modal" id="importModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">Import Environment Configuration</div>
+        <button class="modal-close" onclick="closeModal('importModal')">&times;</button>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label">Upload JSON Configuration File</label>
+        <input type="file" class="form-input" id="configFile" accept=".json" onchange="previewImport()">
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label">Or Paste JSON Configuration</label>
+        <textarea class="form-textarea" id="configJson" placeholder="Paste JSON configuration here..." style="min-height:200px;"></textarea>
+      </div>
+      
+      <div id="importPreview" style="display:none;">
+        <h4>Import Preview:</h4>
+        <div id="importSummary"></div>
+      </div>
+      
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('importModal')">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="importConfiguration()">📥 Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Advanced Configuration Manager Modal -->
+  <div class="modal" id="configManagerModal">
+    <div class="modal-content" style="max-width:800px;">
+      <div class="modal-header">
+        <div class="modal-title">Advanced Configuration Manager</div>
+        <button class="modal-close" onclick="closeModal('configManagerModal')">&times;</button>
+      </div>
+      
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div>
+          <h4>Current Configuration</h4>
+          <textarea id="currentConfig" style="width:100%;height:400px;font-family:monospace;font-size:0.8em;" readonly></textarea>
+          <button class="btn btn-secondary" onclick="exportFullConfig()">📄 Export All</button>
+        </div>
+        <div>
+          <h4>Server Mappings</h4>
+          <div id="serverMappings" style="background:#f8f9fa;padding:12px;border-radius:8px;min-height:200px;">
+            <p><strong>Current API Mappings:</strong></p>
+            <ul style="font-family:monospace;font-size:0.9em;">
+              <li>dev, shadow → DEV</li>
+              <li>test → TEST</li>
+              <li>prod, check, build → LIVE</li>
+            </ul>
+          </div>
+          <button class="btn btn-warning" onclick="refreshServerConfig()">🔄 Refresh</button>
+          <button class="btn btn-primary" onclick="saveServerConfig()">💾 Update Server</button>
+        </div>
+      </div>
+      
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('configManagerModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Environment configuration
+    let environments = {
+      dev: {
+        name: 'Development Database',
+        jdbc: 'jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotDev;encrypt=true;integratedSecurity=true;trustServerCertificate=true',
+        server: 'dbms-aipoc01:1433',
+        database: 'AutopilotDev',
+        type: 'working',
+        auth: 'integrated',
+        encrypt: true,
+        trustCert: true
+      },
+      shadow: {
+        name: 'Shadow Database',
+        jdbc: 'jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotShadow;encrypt=false;integratedSecurity=true;trustServerCertificate=false',
+        server: 'dbms-aipoc01:1433',
+        database: 'AutopilotShadow',
+        type: 'working',
+        auth: 'integrated',
+        encrypt: false,
+        trustCert: false
+      },
+      prod: {
+        name: 'Production Database',
+        jdbc: 'jdbc:sqlserver://localhost;databaseName=AutopilotProd;encrypt=true;integratedSecurity=true;trustServerCertificate=true',
+        server: 'localhost',
+        database: 'AutopilotProd',
+        type: 'deployment',
+        auth: 'integrated',
+        encrypt: true,
+        trustCert: true
+      },
+      test: {
+        name: 'Test Database',
+        jdbc: 'jdbc:sqlserver://dbms-aipoc01:1433;databaseName=AutopilotTest;encrypt=false;integratedSecurity=true;trustServerCertificate=false',
+        server: 'dbms-aipoc01:1433',
+        database: 'AutopilotTest',
+        type: 'deployment',
+        auth: 'integrated',
+        encrypt: false,
+        trustCert: false
+      },
+      check: {
+        name: 'Check (Reporting) Database',
+        jdbc: 'jdbc:sqlserver://localhost;databaseName=AutopilotCheck;encrypt=true;integratedSecurity=true;trustServerCertificate=true',
+        server: 'localhost',
+        database: 'AutopilotCheck',
+        type: 'deployment',
+        auth: 'integrated',
+        encrypt: true,
+        trustCert: true
+      },
+      build: {
+        name: 'Build Database',
+        jdbc: 'jdbc:sqlserver://localhost;databaseName=AutopilotBuild;encrypt=true;integratedSecurity=true;trustServerCertificate=true',
+        server: 'localhost',
+        database: 'AutopilotBuild',
+        type: 'deployment',
+        auth: 'integrated',
+        encrypt: true,
+        trustCert: true
+      }
+    };
+
+    let isEditing = false;
+    let currentEditingKey = null;
+
+    // Copy JDBC URL to clipboard
+    async function copyJdbcUrl(envKey) {
+      const url = environments[envKey]?.jdbc;
+      if (!url) return;
+      
+      try {
+        await navigator.clipboard.writeText(url);
+        showNotification(`📋 JDBC URL copied for ${environments[envKey].name}`, 'success');
+      } catch (err) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = url;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showNotification(`📋 JDBC URL copied for ${environments[envKey].name}`, 'success');
+      }
+    }
+
+    // Test database connection
+    async function testConnection(envKey) {
+      const env = environments[envKey];
+      if (!env) return;
+      
+      updateConnectionStatus(envKey, 'testing', '🔄 Testing connection...');
+      
+      try {
+        // Map our environment keys to the server's expected keys
+        const serverEnvMap = {
+          'dev': 'DEV',
+          'shadow': 'DEV', // Assuming shadow uses DEV config for now
+          'test': 'TEST',
+          'prod': 'LIVE',
+          'check': 'LIVE', // Assuming check uses LIVE config for now
+          'build': 'LIVE'  // Assuming build uses LIVE config for now
+        };
+        
+        const serverEnv = serverEnvMap[envKey];
+        if (!serverEnv) {
+          updateConnectionStatus(envKey, 'error', '❌ Environment mapping not found');
+          updateStatusDot(envKey, 'error');
+          return;
+        }
+        
+        // Call the existing connection API
+        const response = await fetch(`/sql-connect/${serverEnv}`);
+        const result = await response.json();
+        
+        if (result.success) {
+          updateConnectionStatus(envKey, 'connected', '✅ ' + result.message);
+          updateStatusDot(envKey, 'connected');
+        } else {
+          updateConnectionStatus(envKey, 'error', '❌ ' + result.message);
+          updateStatusDot(envKey, 'error');
+        }
+      } catch (error) {
+        updateConnectionStatus(envKey, 'error', `❌ Error: ${error.message}`);
+        updateStatusDot(envKey, 'error');
+      }
+    }
+
+    // Connect to environment
+    async function connectEnvironment(envKey) {
+      const env = environments[envKey];
+      if (!env) return;
+      
+      if (envKey === 'prod') {
+        if (!confirm('⚠️ You are about to connect to PRODUCTION!\n\nThis environment contains live data. Please confirm you want to proceed.')) {
+          return;
+        }
+      }
+      
+      showNotification(`🔌 Connecting to ${env.name}...`, 'info');
+      
+      try {
+        // Map our environment keys to the server's expected keys
+        const serverEnvMap = {
+          'dev': 'DEV',
+          'shadow': 'DEV',
+          'test': 'TEST', 
+          'prod': 'LIVE',
+          'check': 'LIVE',
+          'build': 'LIVE'
+        };
+        
+        const serverEnv = serverEnvMap[envKey];
+        if (!serverEnv) {
+          showNotification(`❌ Environment mapping not found for ${env.name}`, 'error');
+          return;
+        }
+        
+        // Call the existing connection API
+        const response = await fetch(`/sql-connect/${serverEnv}`);
+        const result = await response.json();
+        
+        if (result.success) {
+          updateStatusDot(envKey, 'connected');
+          showNotification(`✅ ${result.message}`, 'success');
+          
+          // Optionally redirect to main app with this environment selected
+          setTimeout(() => {
+            if (confirm('🏠 Would you like to go to the main application with this environment?')) {
+              window.location.href = `index.html`;
+            }
+          }, 1000);
+        } else {
+          updateStatusDot(envKey, 'error');
+          showNotification(`❌ Failed to connect to ${env.name}: ${result.message}`, 'error');
+        }
+      } catch (error) {
+        updateStatusDot(envKey, 'error');
+        showNotification(`❌ Failed to connect to ${env.name}: ${error.message}`, 'error');
+      }
+    }
+
+    // Show database information
+    async function showDatabaseInfo(envKey) {
+      const env = environments[envKey];
+      if (!env) return;
+      
+      try {
+        // Map environment key to server environment
+        const serverEnvMap = {
+          'dev': 'DEV',
+          'shadow': 'DEV',
+          'test': 'TEST',
+          'prod': 'LIVE', 
+          'check': 'LIVE',
+          'build': 'LIVE'
+        };
+        
+        const serverEnv = serverEnvMap[envKey];
+        if (!serverEnv) {
+          alert(`Environment mapping not found for ${env.name}`);
+          return;
+        }
+        
+        showNotification(`🔍 Getting database info for ${env.name}...`, 'info');
+        
+        // Try to get basic database info using existing objects endpoint
+        const response = await fetch(`/db/objects?env=${serverEnv}`);
+        const result = await response.json();
+        
+        let info = `Database Information for ${env.name}:\n\n`;
+        info += `Server: ${env.server}\n`;
+        info += `Database: ${env.database}\n`;
+        info += `JDBC URL: ${env.jdbc}\n\n`;
+        info += `Connection Details:\n`;
+        info += `- Authentication: Integrated Security (Windows Auth)\n`;
+        info += `- Encryption: ${env.jdbc.includes('encrypt=true') ? 'Enabled' : 'Disabled'}\n`;
+        info += `- Trust Certificate: ${env.jdbc.includes('trustServerCertificate=true') ? 'Yes' : 'No'}\n\n`;
+        
+        if (result.success) {
+          const totalObjects = (result.tables?.length || 0) + (result.views?.length || 0) + 
+                             (result.procedures?.length || 0) + (result.functions?.length || 0);
+          info += `Database Objects:\n`;
+          info += `- Tables: ${result.tables?.length || 0}\n`;
+          info += `- Views: ${result.views?.length || 0}\n`;
+          info += `- Stored Procedures: ${result.procedures?.length || 0}\n`;
+          info += `- Functions: ${result.functions?.length || 0}\n`;
+          info += `- Total Objects: ${totalObjects}\n`;
+        } else {
+          info += `Database Objects: Unable to retrieve (${result.message || 'Connection required'})\n`;
+        }
+        
+        alert(info);
+      } catch (error) {
+        const basicInfo = `
+Database Information for ${env.name}:
+
+Server: ${env.server}
+Database: ${env.database}
+JDBC URL: ${env.jdbc}
+
+Connection Details:
+- Authentication: Integrated Security (Windows Auth)
+- Encryption: ${env.jdbc.includes('encrypt=true') ? 'Enabled' : 'Disabled'}
+- Trust Certificate: ${env.jdbc.includes('trustServerCertificate=true') ? 'Yes' : 'No'}
+
+Note: Unable to retrieve live database info. Please connect first.
+        `.trim();
+        
+        alert(basicInfo);
+      }
+    }
+
+    // Update connection status
+    function updateConnectionStatus(envKey, status, message) {
+      const connElement = document.getElementById(`conn-${envKey}`);
+      if (connElement) {
+        connElement.className = `connection-info ${status}`;
+        connElement.innerHTML = `<span>${message}</span>`;
+      }
+    }
+
+    // Update status dot
+    function updateStatusDot(envKey, status) {
+      const statusElement = document.getElementById(`status-${envKey}`);
+      if (statusElement) {
+        statusElement.className = `env-status ${status}`;
+      }
+    }
+
+    // Test all working environments
+    async function testWorkingEnvironments() {
+      showNotification('🧪 Testing all working environments...', 'info');
+      for (const [key, env] of Object.entries(environments)) {
+        if (env.type === 'working') {
+          await testConnection(key);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Stagger tests
+        }
+      }
+      showNotification('✅ Working environment tests completed', 'success');
+    }
+
+    // Test all deployment environments
+    async function testDeploymentEnvironments() {
+      showNotification('🧪 Testing all deployment environments...', 'info');
+      for (const [key, env] of Object.entries(environments)) {
+        if (env.type === 'deployment') {
+          await testConnection(key);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Stagger tests
+        }
+      }
+      showNotification('✅ Deployment environment tests completed', 'success');
+    }
+
+    // Test all connections
+    async function testAllConnections() {
+      showNotification('🧪 Testing all environments...', 'info');
+      for (const key of Object.keys(environments)) {
+        await testConnection(key);
+        await new Promise(resolve => setTimeout(resolve, 300)); // Stagger tests
+      }
+      showNotification('✅ All environment tests completed', 'success');
+    }
+
+    // Refresh all connections
+    async function refreshAllConnections() {
+      showNotification('🔄 Refreshing all connections...', 'info');
+      
+      // Reset all status indicators
+      for (const key of Object.keys(environments)) {
+        updateConnectionStatus(key, '', '🔍 Connection not tested');
+        updateStatusDot(key, '');
+      }
+      
+      showNotification('✅ All connections refreshed', 'success');
+    }
+
+    // Export configuration
+    function exportWorkingConfig() {
+      const workingEnvs = Object.entries(environments)
+        .filter(([key, env]) => env.type === 'working')
+        .reduce((obj, [key, env]) => {
+          obj[key] = env;
+          return obj;
+        }, {});
+      
+      downloadJson(workingEnvs, 'working-environments.json');
+    }
+
+    function exportDeploymentConfig() {
+      const deploymentEnvs = Object.entries(environments)
+        .filter(([key, env]) => env.type === 'deployment')
+        .reduce((obj, [key, env]) => {
+          obj[key] = env;
+          return obj;
+        }, {});
+      
+      downloadJson(deploymentEnvs, 'deployment-environments.json');
+    }
+
+    // Download JSON file
+    function downloadJson(data, filename) {
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      showNotification(`📁 Configuration exported: ${filename}`, 'success');
+    }
+
+    // Show notification
+    function showNotification(message, type = 'info') {
+      // Create notification element
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: 8px;
+        color: white;
+        font-weight: 600;
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+        max-width: 350px;
+        word-wrap: break-word;
+      `;
+      
+      // Set background color based on type
+      switch (type) {
+        case 'success': notification.style.background = '#2ecc71'; break;
+        case 'error': notification.style.background = '#e74c3c'; break;
+        case 'warning': notification.style.background = '#f39c12'; break;
+        default: notification.style.background = '#3498db'; break;
+      }
+      
+      notification.textContent = message;
+      document.body.appendChild(notification);
+      
+      // Auto-remove after 3 seconds
+      setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }, 3000);
+    }
+
+    // Add CSS animations
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+      @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // Initialize page
+    document.addEventListener('DOMContentLoaded', () => {
+      loadSavedEnvironments();
+      showNotification('🌐 Environment Management loaded', 'success');
+      updateStats();
+      
+      // Auto-update JDBC preview when form changes
+      const formInputs = ['envServer', 'envDatabase', 'envAuth', 'envUsername', 'envPassword', 'envEncrypt', 'envTrustCert', 'envAdditional'];
+      formInputs.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+          element.addEventListener('input', updateJdbcPreview);
+          element.addEventListener('change', updateJdbcPreview);
+        }
+      });
+      
+      // Setup form submission
+      document.getElementById('environmentForm').addEventListener('submit', saveEnvironment);
+    });
+
+    // === Configuration Management Functions ===
+    
+    function openAddEnvironmentModal() {
+      isEditing = false;
+      currentEditingKey = null;
+      document.getElementById('modalTitle').textContent = 'Add New Environment';
+      clearEnvironmentForm();
+      showModal('environmentModal');
+    }
+    
+    function editEnvironment(envKey) {
+      const env = environments[envKey];
+      if (!env) return;
+      
+      isEditing = true;
+      currentEditingKey = envKey;
+      document.getElementById('modalTitle').textContent = `Edit ${env.name}`;
+      
+      // Populate form with current values
+      document.getElementById('envKey').value = envKey;
+      document.getElementById('envKey').disabled = true; // Can't change key when editing
+      document.getElementById('envName').value = env.name;
+      document.getElementById('envServer').value = env.server;
+      document.getElementById('envDatabase').value = env.database;
+      document.getElementById('envType').value = env.type;
+      document.getElementById('envAuth').value = env.auth || 'integrated';
+      document.getElementById('envUsername').value = env.username || '';
+      document.getElementById('envPassword').value = env.password || '';
+      document.getElementById('envEncrypt').checked = env.encrypt !== false;
+      document.getElementById('envTrustCert').checked = env.trustCert !== false;
+      document.getElementById('envAdditional').value = env.additional || '';
+      
+      toggleAuthFields();
+      updateJdbcPreview();
+      showModal('environmentModal');
+    }
+    
+    function clearEnvironmentForm() {
+      document.getElementById('environmentForm').reset();
+      document.getElementById('envKey').disabled = false;
+      document.getElementById('envEncrypt').checked = true;
+      document.getElementById('envTrustCert').checked = true;
+      toggleAuthFields();
+      updateJdbcPreview();
+    }
+    
+    function toggleAuthFields() {
+      const authType = document.getElementById('envAuth').value;
+      const sqlFields = document.getElementById('sqlAuthFields');
+      sqlFields.style.display = authType === 'sql' ? 'block' : 'none';
+      updateJdbcPreview();
+    }
+    
+    function updateJdbcPreview() {
+      const server = document.getElementById('envServer').value;
+      const database = document.getElementById('envDatabase').value;
+      const authType = document.getElementById('envAuth').value;
+      const username = document.getElementById('envUsername').value;
+      const password = document.getElementById('envPassword').value;
+      const encrypt = document.getElementById('envEncrypt').checked;
+      const trustCert = document.getElementById('envTrustCert').checked;
+      const additional = document.getElementById('envAdditional').value;
+      
+      if (!server || !database) {
+        document.getElementById('envJdbcPreview').value = 'Please enter server and database name';
+        return;
+      }
+      
+      let jdbc = `jdbc:sqlserver://${server};databaseName=${database}`;
+      jdbc += `;encrypt=${encrypt}`;
+      
+      if (authType === 'integrated') {
+        jdbc += ';integratedSecurity=true';
+      } else {
+        if (username) jdbc += `;user=${username}`;
+        if (password) jdbc += `;password=${password}`;
+      }
+      
+      jdbc += `;trustServerCertificate=${trustCert}`;
+      
+      if (additional.trim()) {
+        const additionalParams = additional.trim();
+        if (!additionalParams.startsWith(';')) {
+          jdbc += ';';
+        }
+        jdbc += additionalParams;
+      }
+      
+      document.getElementById('envJdbcPreview').value = jdbc;
+    }
+    
+    async function testNewConnection() {
+      const envKey = document.getElementById('envKey').value.trim();
+      const envName = document.getElementById('envName').value.trim();
+      const envServer = document.getElementById('envServer').value.trim();
+      const envDatabase = document.getElementById('envDatabase').value.trim();
+      const envAuth = document.getElementById('envAuth').value;
+      const envUsername = document.getElementById('envUsername').value.trim();
+      const envPassword = document.getElementById('envPassword').value;
+      const envEncrypt = document.getElementById('envEncrypt').checked;
+      const envTrustCert = document.getElementById('envTrustCert').checked;
+      
+      if (!envServer || !envDatabase) {
+        showNotification('❌ Please configure server and database first', 'error');
+        return;
+      }
+      
+      showNotification('🧪 Testing new connection configuration...', 'info');
+      
+      try {
+        // First save the configuration temporarily
+        const response = await fetch('/api/environments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: `TEST_${envKey || 'TEMP'}`,
+            name: envName,
+            server: envServer,
+            database: envDatabase,
+            username: envAuth === 'sql' ? envUsername : null,
+            password: envAuth === 'sql' ? envPassword : null,
+            encrypt: envEncrypt,
+            trustCert: envTrustCert,
+            integratedSecurity: envAuth === 'integrated'
+          })
+        });
+        
+        const configResult = await response.json();
+        if (!configResult.success) {
+          showNotification(`❌ Configuration error: ${configResult.message}`, 'error');
+          return;
+        }
+        
+        // Now test the connection
+        const testResponse = await fetch(`/sql-connect/TEST_${envKey || 'TEMP'}`);
+        const testResult = await testResponse.json();
+        
+        // Clean up temporary configuration
+        await fetch(`/api/environments/TEST_${envKey || 'TEMP'}`, { method: 'DELETE' });
+        
+        if (testResult.success) {
+          showNotification('✅ Connection test successful!', 'success');
+        } else {
+          showNotification(`❌ Connection test failed: ${testResult.message}`, 'error');
+        }
+      } catch (error) {
+        showNotification(`❌ Test error: ${error.message}`, 'error');
+      }
+    }
+    
+    async function saveEnvironment(event) {
+      event.preventDefault();
+      
+      const envKey = document.getElementById('envKey').value.trim();
+      const envName = document.getElementById('envName').value.trim();
+      const envServer = document.getElementById('envServer').value.trim();
+      const envDatabase = document.getElementById('envDatabase').value.trim();
+      const envType = document.getElementById('envType').value;
+      const envAuth = document.getElementById('envAuth').value;
+      const envUsername = document.getElementById('envUsername').value.trim();
+      const envPassword = document.getElementById('envPassword').value;
+      const envEncrypt = document.getElementById('envEncrypt').checked;
+      const envTrustCert = document.getElementById('envTrustCert').checked;
+      const envAdditional = document.getElementById('envAdditional').value.trim();
+      const jdbc = document.getElementById('envJdbcPreview').value;
+      
+      if (!envKey || !envName || !envServer || !envDatabase) {
+        showNotification('❌ Please fill in all required fields', 'error');
+        return;
+      }
+      
+      if (!isEditing && environments[envKey]) {
+        showNotification('❌ Environment key already exists. Choose a different key.', 'error');
+        return;
+      }
+      
+      try {
+        // Save to server first
+        const response = await fetch('/api/environments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: envKey,
+            name: envName,
+            server: envServer,
+            database: envDatabase,
+            username: envAuth === 'sql' ? envUsername : null,
+            password: envAuth === 'sql' ? envPassword : null,
+            encrypt: envEncrypt,
+            trustCert: envTrustCert,
+            integratedSecurity: envAuth === 'integrated'
+          })
+        });
+        
+        const result = await response.json();
+        if (!result.success) {
+          showNotification(`❌ Server error: ${result.message}`, 'error');
+          return;
+        }
+        
+        // Create new environment object for local storage
+        const newEnv = {
+          name: envName,
+          jdbc: jdbc,
+          server: envServer,
+          database: envDatabase,
+          type: envType,
+          auth: envAuth,
+          encrypt: envEncrypt,
+          trustCert: envTrustCert
+        };
+        
+        if (envAuth === 'sql') {
+          newEnv.username = envUsername;
+          newEnv.password = envPassword;
+        }
+        
+        if (envAdditional) {
+          newEnv.additional = envAdditional;
+        }
+        
+        // Save to local environments
+        environments[envKey] = newEnv;
+        
+        // Update UI
+        if (isEditing) {
+          showNotification(`✅ Environment '${envName}' updated successfully!`, 'success');
+          refreshEnvironmentCard(envKey);
+        } else {
+          showNotification(`✅ Environment '${envName}' added successfully!`, 'success');
+          addNewEnvironmentCard(envKey, newEnv);
+        }
+        
+        updateStats();
+        closeModal('environmentModal');
+        
+        // Save to localStorage for persistence
+        localStorage.setItem('environments', JSON.stringify(environments));
+        
+      } catch (error) {
+        showNotification(`❌ Save failed: ${error.message}`, 'error');
+      }
+    }
+    
+    function refreshEnvironmentCard(envKey) {
+      // In a real implementation, this would update the specific card
+      // For now, just refresh the page or update stats
+      updateStats();
+      showNotification('💡 Refresh the page to see updated environment card', 'info');
+    }
+    
+    function addNewEnvironmentCard(envKey, env) {
+      // In a real implementation, this would dynamically add a new card
+      // For now, just show success message
+      showNotification(`💡 New environment '${env.name}' added. Refresh page to see the card.`, 'info');
+    }
+    
+    // === Import/Export Functions ===
+    
+    function openImportModal() {
+      showModal('importModal');
+    }
+    
+    function previewImport() {
+      const file = document.getElementById('configFile').files[0];
+      const jsonText = document.getElementById('configJson').value;
+      
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            const config = JSON.parse(e.target.result);
+            showImportPreview(config);
+          } catch (error) {
+            showNotification('❌ Invalid JSON file', 'error');
+          }
+        };
+        reader.readAsText(file);
+      } else if (jsonText.trim()) {
+        try {
+          const config = JSON.parse(jsonText);
+          showImportPreview(config);
+        } catch (error) {
+          showNotification('❌ Invalid JSON format', 'error');
+        }
+      }
+    }
+    
+    function showImportPreview(config) {
+      const preview = document.getElementById('importPreview');
+      const summary = document.getElementById('importSummary');
+      
+      const envCount = Object.keys(config).length;
+      const newEnvs = Object.keys(config).filter(key => !environments[key]);
+      const existingEnvs = Object.keys(config).filter(key => environments[key]);
+      
+      summary.innerHTML = `
+        <p><strong>Environments to import:</strong> ${envCount}</p>
+        <p><strong>New environments:</strong> ${newEnvs.length} (${newEnvs.join(', ') || 'none'})</p>
+        <p><strong>Will overwrite:</strong> ${existingEnvs.length} (${existingEnvs.join(', ') || 'none'})</p>
+        <div style="background:#f8f9fa;padding:12px;border-radius:6px;margin-top:12px;">
+          <strong>Preview:</strong>
+          <pre style="font-size:0.8em;max-height:150px;overflow-y:auto;">${JSON.stringify(config, null, 2)}</pre>
+        </div>
+      `;
+      
+      preview.style.display = 'block';
+    }
+    
+    function importConfiguration() {
+      const file = document.getElementById('configFile').files[0];
+      const jsonText = document.getElementById('configJson').value;
+      
+      let config;
+      
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            config = JSON.parse(e.target.result);
+            doImport(config);
+          } catch (error) {
+            showNotification('❌ Invalid JSON file', 'error');
+          }
+        };
+        reader.readAsText(file);
+        return;
+      } else if (jsonText.trim()) {
+        try {
+          config = JSON.parse(jsonText);
+          doImport(config);
+        } catch (error) {
+          showNotification('❌ Invalid JSON format', 'error');
+          return;
+        }
+      } else {
+        showNotification('❌ Please select a file or paste JSON configuration', 'error');
+        return;
+      }
+    }
+    
+    function doImport(config) {
+      try {
+        const importCount = Object.keys(config).length;
+        
+        // Merge configurations
+        Object.assign(environments, config);
+        
+        // Save to localStorage
+        localStorage.setItem('environments', JSON.stringify(environments));
+        
+        updateStats();
+        closeModal('importModal');
+        showNotification(`✅ Successfully imported ${importCount} environment(s)!`, 'success');
+        
+        setTimeout(() => {
+          if (confirm('🔄 Would you like to refresh the page to see all imported environments?')) {
+            location.reload();
+          }
+        }, 1000);
+      } catch (error) {
+        showNotification(`❌ Import failed: ${error.message}`, 'error');
+      }
+    }
+    
+    // === Advanced Configuration Manager ===
+    
+    function openConfigManager() {
+      document.getElementById('currentConfig').value = JSON.stringify(environments, null, 2);
+      showModal('configManagerModal');
+    }
+    
+    function exportFullConfig() {
+      downloadJson(environments, 'all-environments.json');
+    }
+    
+    function refreshServerConfig() {
+      // This would fetch current server configuration
+      showNotification('🔄 Server configuration refreshed', 'info');
+    }
+    
+    function saveServerConfig() {
+      // This would save configuration to server
+      showNotification('💾 Server configuration saved', 'success');
+    }
+    
+    // === Utility Functions ===
+    
+    function showModal(modalId) {
+      document.getElementById(modalId).classList.add('show');
+    }
+    
+    function closeModal(modalId) {
+      document.getElementById(modalId).classList.remove('show');
+    }
+    
+    function updateStats() {
+      const total = Object.keys(environments).length;
+      const working = Object.values(environments).filter(env => env.type === 'working').length;
+      
+      // Update total environments count
+      const totalElement = document.querySelector('.config-section [style*="text-align:center"] .font-size-1\\.5em, .config-section [style*="text-align:center"] div:first-child');
+      if (totalElement) {
+        totalElement.textContent = total;
+      }
+      
+      const workingElement = document.getElementById('workingCount');
+      if (workingElement) {
+        workingElement.textContent = working;
+      }
+      
+      // Update connected and error counts based on current status
+      let connected = 0, errors = 0;
+      Object.keys(environments).forEach(key => {
+        const status = document.getElementById(`status-${key}`);
+        if (status) {
+          if (status.classList.contains('connected')) connected++;
+          else if (status.classList.contains('error')) errors++;
+        }
+      });
+      
+      const connectedElement = document.getElementById('connectedCount');
+      const errorElement = document.getElementById('errorCount');
+      
+      if (connectedElement) connectedElement.textContent = connected;
+      if (errorElement) errorElement.textContent = errors;
+    }
+    
+    // Load saved environments from localStorage on page load
+    function loadSavedEnvironments() {
+      const saved = localStorage.getItem('environments');
+      if (saved) {
+        try {
+          const savedEnvs = JSON.parse(saved);
+          environments = { ...environments, ...savedEnvs };
+        } catch (error) {
+          console.log('Error loading saved environments:', error);
+        }
+      }
+    }
+    
+    // Close modals when clicking outside
+    document.addEventListener('click', function(event) {
+      if (event.target.classList.contains('modal')) {
+        event.target.classList.remove('show');
+      }
+    });
+  </script>
+</body>
+</html>

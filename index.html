@@ -84,6 +84,22 @@
     @media (max-width:700px) {
       #objectPreviewModal.modal-regular, #objectPreviewModal.modal-compact { width:95% !important; height:80% !important; max-width:unset !important; }
     }
+    
+    /* Object History Modal Styles */
+    #objectHistoryModal { backdrop-filter: blur(4px); }
+    .history-item { 
+      border-bottom: 1px solid #f0f0f0; 
+      padding: 12px; 
+      cursor: pointer; 
+      transition: background-color 0.2s ease;
+    }
+    .history-item:hover { background-color: #f8f9fa; }
+    .history-item.selected { background-color: #e3f2fd; border-left: 4px solid #2196f3; }
+    .history-commit { font-weight: 600; color: #2196f3; font-family: monospace; }
+    .history-meta { font-size: 0.9em; color: #666; margin-top: 4px; }
+    .history-message { margin-top: 6px; color: #333; }
+    .diff-highlight { background-color: #fff3cd; padding: 2px 4px; border-radius: 3px; }
+    
     /* Inline result fancy layout */
     .inline-result-toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
     .inline-result-actions{display:flex;gap:6px;align-items:center}
@@ -99,6 +115,12 @@
 <body>
   <div class="app-container">
   <h1> Sethu Neeli - MA - GIT & SQL Management</h1>
+  
+  <nav style="display:flex;gap:12px;margin-bottom:24px;padding:12px 0;border-bottom:1px solid rgba(10,20,40,0.1);">
+    <a href="index.html" style="padding:8px 16px;border-radius:8px;text-decoration:none;color:#333;background:rgba(255,255,255,0.7);border:1px solid rgba(10,20,40,0.08);background:linear-gradient(90deg,var(--blue2),#6fb8ff);color:white;">🏠 Home</a>
+    <a href="environments.html" style="padding:8px 16px;border-radius:8px;text-decoration:none;color:#333;background:rgba(255,255,255,0.7);border:1px solid rgba(10,20,40,0.08);transition:all 0.2s;" onmouseover="this.style.background='var(--blue2)';this.style.color='white';" onmouseout="this.style.background='rgba(255,255,255,0.7)';this.style.color='#333';">🌐 Environments</a>
+    <a href="#audit" onclick="document.getElementById('auditSection').scrollIntoView()" style="padding:8px 16px;border-radius:8px;text-decoration:none;color:#333;background:rgba(255,255,255,0.7);border:1px solid rgba(10,20,40,0.08);transition:all 0.2s;" onmouseover="this.style.background='var(--blue2)';this.style.color='white';" onmouseout="this.style.background='rgba(255,255,255,0.7)';this.style.color='#333';">📊 Audit</a>
+  </nav>
 
   <section>
     <h2>Environment</h2>
@@ -169,9 +191,9 @@
     <h2>Object Migration (Dev → Test)</h2>
     <div class="row">
       <label style="font-weight:600">Source:</label>
-      <select id="srcEnv"><option value="DEV">DEV</option><option value="TEST">TEST</option><option value="LIVE">LIVE</option></select>
+      <select id="srcEnv" title="Source environment for comparison - auto-synced with main environment selection"><option value="DEV">DEV</option><option value="TEST">TEST</option><option value="LIVE">LIVE</option></select>
       <label style="font-weight:600">Target:</label>
-      <select id="tgtEnv"><option value="TEST">TEST</option><option value="DEV">DEV</option><option value="LIVE">LIVE</option></select>
+      <select id="tgtEnv" title="Target environment for deployment - auto-synced with main environment selection"><option value="TEST">TEST</option><option value="DEV">DEV</option><option value="LIVE">LIVE</option></select>
   <button id="refreshObjects">Refresh Object List</button>
   <button id="selectAllObjects" style="margin-left:6px">Select All</button>
   <button id="clearAllObjects" style="margin-left:6px">Clear Selection</button>
@@ -219,6 +241,26 @@
       </div>
     </div>
     <!-- Inline diff removed (compare rendered in Source/Target panels) -->
+  </div>
+
+  <!-- Modal for viewing object change history from Git -->
+  <div id="objectHistoryModal" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:85%;max-width:1000px;height:75%;background:#fff;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,0.3);z-index:9999;padding:12px;overflow:hidden"> 
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong id="objectHistoryTitle">Object Change History</strong>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="refreshHistoryBtn" title="Refresh history" style="padding:6px 8px;border-radius:6px;border:1px solid #ddd;background:#fff">🔄 Refresh</button>
+        <button id="closeObjectHistory" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
+      </div>
+    </div>
+    <div style="height:calc(100% - 40px);display:flex;flex-direction:column">
+      <div id="historyList" style="max-height:300px;overflow:auto;border:1px solid #eee;border-radius:6px;margin-bottom:12px">
+        <div style="padding:12px;text-align:center;color:#666">Loading change history...</div>
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column">
+        <div style="font-weight:600;margin-bottom:6px">Commit Details & Diff</div>
+        <div id="commitDetails" style="background:#f8f8f8;padding:8px;border-radius:6px;overflow:auto;flex:1;font-family:monospace;white-space:pre-wrap;font-size:14px">Select a commit above to view details and diff</div>
+      </div>
+    </div>
   </div>
 
   <section>
@@ -637,6 +679,122 @@
     } catch (e) { console.warn('panel diff render failed', e); }
       }
 
+      // Show object change history from Git
+      async function showObjectHistory(obj) {
+        const type = (obj.type || 'TABLE').toString().toUpperCase();
+        const schema = obj.schema || 'dbo';
+        const name = obj.name || obj.table || '';
+        if (!name) return alert('Object name missing');
+        
+        const title = `Change History: ${type} ${schema}.${name}`;
+        document.getElementById('objectHistoryTitle').innerText = title;
+        document.getElementById('objectHistoryModal').style.display = 'block';
+        
+        // Show loading in history list
+        document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
+        document.getElementById('commitDetails').textContent = 'Select a commit above to view details and diff';
+        
+        try {
+          const response = await fetch(`/api/git/object-history/${encodeURIComponent(type)}/${encodeURIComponent(schema)}/${encodeURIComponent(name)}`);
+          const result = await response.json();
+          
+          if (!result.success) {
+            document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Error: ${escapeHtml(result.message || 'Failed to load history')}</div>`;
+            return;
+          }
+          
+          renderGitHistory(result.history || []);
+        } catch (error) {
+          console.error('Error loading object history:', error);
+          document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Error: ${escapeHtml(error.message)}</div>`;
+        }
+      }
+      
+      function renderGitHistory(commits) {
+        const historyList = document.getElementById('historyList');
+        
+        if (!commits || commits.length === 0) {
+          historyList.innerHTML = '<div style="padding:12px;text-align:center;color:#666">No change history found for this object</div>';
+          return;
+        }
+        
+        let html = '';
+        commits.forEach((commit, index) => {
+          const date = new Date(commit.date).toLocaleString();
+          html += `
+            <div class="history-item" data-commit="${escapeHtml(commit.hash)}">
+              <div class="history-commit">${escapeHtml(commit.hash.substring(0, 8))}</div>
+              <div class="history-meta">
+                <strong>${escapeHtml(commit.author)}</strong> on ${date}
+                ${commit.environment ? `<span class="diff-highlight">ENV: ${escapeHtml(commit.environment)}</span>` : ''}
+                ${commit.action ? `<span class="diff-highlight">ACTION: ${escapeHtml(commit.action)}</span>` : ''}
+              </div>
+              <div class="history-message">${escapeHtml(commit.message)}</div>
+            </div>
+          `;
+        });
+        
+        historyList.innerHTML = html;
+        
+        // Add click handlers to load commit details
+        historyList.querySelectorAll('.history-item').forEach(item => {
+          item.addEventListener('click', async () => {
+            // Remove previous selection
+            historyList.querySelectorAll('.history-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            
+            const commitHash = item.dataset.commit;
+            await loadCommitDetails(commitHash);
+          });
+        });
+      }
+      
+      async function loadCommitDetails(commitHash) {
+        const commitDetails = document.getElementById('commitDetails');
+        commitDetails.textContent = 'Loading commit details...';
+        
+        try {
+          const response = await fetch(`/api/git/commit/${encodeURIComponent(commitHash)}`);
+          const result = await response.json();
+          
+          if (!result.success) {
+            commitDetails.textContent = `Error: ${result.message || 'Failed to load commit details'}`;
+            return;
+          }
+          
+          const commit = result.commit;
+          let details = `Commit: ${commit.hash}
+Author: ${commit.author}
+Date: ${new Date(commit.date).toLocaleString()}
+Message: ${commit.message}
+
+`;
+          
+          if (commit.metadata) {
+            details += `Metadata:
+Environment: ${commit.metadata.environment || 'N/A'}
+User: ${commit.metadata.user || 'N/A'}
+Action: ${commit.metadata.action || 'N/A'}
+Correlation ID: ${commit.metadata.correlationId || 'N/A'}
+Rows Affected: ${commit.metadata.rowsAffected || 'N/A'}
+
+`;
+          }
+          
+          if (commit.diff) {
+            details += `Diff:
+${commit.diff}`;
+          } else {
+            details += 'No diff available for this commit.';
+          }
+          
+          commitDetails.textContent = details;
+        } catch (error) {
+          console.error('Error loading commit details:', error);
+          commitDetails.textContent = `Error: ${error.message}`;
+        }
+      }
+
       function renderSampleTable(container, rows) {
         if (!rows || !rows.length) return;
         const table = document.createElement('table'); table.style.width='100%'; table.style.borderCollapse='collapse';
@@ -698,6 +856,24 @@
   if (env === 'dev') document.getElementById('btnDev').classList.add('btn-active');
   if (env === 'test') document.getElementById('btnStage').classList.add('btn-active');
   if (env === 'live') document.getElementById('btnProd').classList.add('btn-active');
+        
+        // Synchronize source and target environment dropdowns based on selection
+        const envUpper = document.getElementById('env').value.toUpperCase();
+        const srcEnvSelect = document.getElementById('srcEnv');
+        const tgtEnvSelect = document.getElementById('tgtEnv');
+        
+        // Set source environment to match selected environment
+        srcEnvSelect.value = envUpper;
+        
+        // Set target environment intelligently based on common promotion patterns
+        if (envUpper === 'DEV') {
+          tgtEnvSelect.value = 'TEST'; // DEV -> TEST is common promotion path
+        } else if (envUpper === 'TEST') {
+          tgtEnvSelect.value = 'LIVE'; // TEST -> LIVE is common promotion path
+        } else if (envUpper === 'LIVE') {
+          tgtEnvSelect.value = 'TEST'; // LIVE -> TEST for rollback scenarios
+        }
+        
         // Auto-trigger connect for the selected environment (map UI values to server keys)
   const map = { 'dev': 'DEV', 'test': 'TEST', 'live': 'LIVE' };
         const sel = document.getElementById('env').value.toLowerCase();
@@ -705,10 +881,30 @@
         // call connectSQL but don't block UI
         // reset labels
         setConnectedButton(null);
-        setTimeout(() => { try { connectSQL(mapped); } catch(e) { /* ignore */ } }, 50);
+        setTimeout(() => { 
+          try { 
+            connectSQL(mapped); 
+            // Refresh object list after environment change and connection
+            setTimeout(() => { try { loadObjects(); } catch(e) { console.log('Failed to load objects after env change:', e); } }, 300);
+          } catch(e) { /* ignore */ } 
+        }, 50);
       }
 
       document.getElementById('env').addEventListener('change', updateEnvHighlight);
+
+      // Add event listeners for source and target environment changes
+      document.getElementById('srcEnv').addEventListener('change', () => {
+        // Refresh object list when source environment changes
+        setTimeout(() => { try { loadObjects(); } catch(e) { console.log('Failed to load objects:', e); } }, 100);
+      });
+      
+      document.getElementById('tgtEnv').addEventListener('change', () => {
+        // Clear any existing comparisons when target environment changes
+        const preview = document.getElementById('objectPreview');
+        if (preview) {
+          preview.innerHTML = '<p>Select objects to compare after environment change.</p>';
+        }
+      });
 
     document.getElementById('execute').addEventListener('click', async () => {
       const btn = document.getElementById('execute');
@@ -1163,8 +1359,9 @@
         const id = 'obj_' + o.type + '_' + o.schema + '_' + objName;
         const div = document.createElement('div');
         const viewBtnId = 'view_' + id;
+        const historyBtnId = 'history_' + id;
         const displayName = (o.type ? (o.type + ' ') : '') + `${o.schema}.${objName}`;
-        div.innerHTML = `<label style="margin-right:8px"><input type="checkbox" data-type="${o.type}" data-schema="${o.schema}" data-name="${objName}" /> ${escapeHtml(displayName)}</label> <button id="${viewBtnId}" style="margin-left:6px;padding:4px 8px">View on Target</button>`;
+        div.innerHTML = `<label style="margin-right:8px"><input type="checkbox" data-type="${o.type}" data-schema="${o.schema}" data-name="${objName}" /> ${escapeHtml(displayName)}</label> <button id="${viewBtnId}" style="margin-left:6px;padding:4px 8px">View on Target</button> <button id="${historyBtnId}" style="margin-left:6px;padding:4px 8px;background:linear-gradient(90deg,#17a2b8,#138496);color:white;border:none;border-radius:4px">📝 History</button>`;
         container.appendChild(div);
         // attach view handler
         setTimeout(() => {
@@ -1174,6 +1371,13 @@
             const checked = Array.from(document.querySelectorAll('#objectList input[type="checkbox"]')).filter(i => i.checked);
             if (checked.length > 1) { viewSelectedOnTarget(); return; }
             viewOnTarget({ type: (o.type||'TABLE'), schema: o.schema, name: objName, table: o.table || objName });
+          });
+          
+          // attach history handler
+          const hb = document.getElementById(historyBtnId);
+          if (!hb) return;
+          hb.addEventListener('click', async () => {
+            showObjectHistory({ type: (o.type||'TABLE'), schema: o.schema, name: objName });
           });
         }, 10);
       });
@@ -1503,6 +1707,37 @@
         return j || { success: resp.ok };
       } catch (e) { return { success: false, message: e.message } }
     }
+    
+    // Initialize object history modal event handlers
+    function initObjectHistoryModal() {
+      const modal = document.getElementById('objectHistoryModal');
+      const closeBtn = document.getElementById('closeObjectHistory');
+      const refreshBtn = document.getElementById('refreshHistoryBtn');
+      
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+          modal.style.display = 'none';
+          // Clear content
+          document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
+          document.getElementById('commitDetails').textContent = 'Select a commit above to view details and diff';
+        });
+      }
+      
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+          // Get current object from modal title
+          const title = document.getElementById('objectHistoryTitle').textContent;
+          const match = title.match(/Change History: (\w+) (\w+)\.(\w+)/);
+          if (match) {
+            const [, type, schema, name] = match;
+            await showObjectHistory({ type, schema, name });
+          }
+        });
+      }
+    }
+    
+    // Initialize the object history modal
+    initObjectHistoryModal();
   </script>
   </div>
 </body>

@@ -5,14 +5,112 @@ const execFile = require('child_process').execFile;
 const sql = require('mssql');
 const multer = require('multer');
 const fs = require('fs');
+const { promisify } = require('util');
 
+const execAsync = promisify(exec);
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Add request logging for debugging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
 app.use(express.static('public'));
+
+// Serve static files from the root directory (for HTML, CSS, JS files)
+app.use(express.static(__dirname));
 
 // serve root index.html
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+// serve index.html explicitly
+app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+// serve environments page
+app.get('/environments.html', (req, res) => res.sendFile(path.join(__dirname, 'environments.html')));
+
+// Generic HTML file serving (fallback for any .html files)
+app.get('/:filename.html', (req, res) => {
+  const fileName = req.params.filename + '.html';
+  const filePath = path.join(__dirname, fileName);
+  
+  // Security check to prevent directory traversal
+  if (fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {
+    return res.status(400).send('Invalid filename');
+  }
+  
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      res.status(404).send('HTML file not found');
+    }
+  });
+});
+
+// Environment configuration endpoints
+app.get('/api/environments', (req, res) => {
+  // Return current environment configurations
+  const envConfigs = Object.keys(sqlConfigs).map(key => ({
+    key,
+    name: key,
+    connected: pools[key] && pools[key].connected
+  }));
+  res.json({ success: true, environments: envConfigs });
+});
+
+app.post('/api/environments', express.json(), (req, res) => {
+  // Add or update environment configuration
+  const { key, name, server, database, username, password, encrypt, trustCert, integratedSecurity } = req.body;
+  
+  if (!key || !server || !database) {
+    return res.status(400).json({ success: false, message: 'Key, server, and database are required' });
+  }
+  
+  // Build connection configuration
+  const config = {
+    server: server.includes(':') ? server.split(':')[0] : server,
+    port: server.includes(':') ? parseInt(server.split(':')[1]) : 1433,
+    database,
+    options: {
+      encrypt: encrypt !== false,
+      trustServerCertificate: trustCert !== false
+    }
+  };
+  
+  if (integratedSecurity !== false && !username) {
+    config.options.trustedConnection = true;
+  } else if (username) {
+    config.user = username;
+    config.password = password || '';
+  }
+  
+  // Save configuration (in production, this would save to a config file or database)
+  sqlConfigs[key.toUpperCase()] = config;
+  
+  res.json({ success: true, message: `Environment '${key}' configured successfully` });
+});
+
+app.delete('/api/environments/:key', (req, res) => {
+  // Remove environment configuration
+  const key = req.params.key.toUpperCase();
+  
+  if (!sqlConfigs[key]) {
+    return res.status(404).json({ success: false, message: 'Environment not found' });
+  }
+  
+  // Close connection if exists
+  if (pools[key] && pools[key].connected) {
+    pools[key].close().catch(() => {});
+    delete pools[key];
+  }
+  
+  // Remove configuration
+  delete sqlConfigs[key];
+  
+  res.json({ success: true, message: `Environment '${key}' removed successfully` });
+});
 
 // Note: destructive statements (CREATE/ALTER/DROP/etc.) are permitted by the server
 
@@ -107,7 +205,6 @@ app.post('/execute-sql', async (req, res) => {
   }
 });
 
-app.listen(3000, () => console.log('Server running on http://localhost:3000'));
 // Configure multer for file uploads
 const upload = multer({
   dest: 'uploads/',
@@ -1286,6 +1383,201 @@ async function planAlterStatement(env, stmt) {
   return { impl: implParts.join('\n') || '-- No implementation', rollback: rollbackParts.join('\n') || '-- No rollback', notes };
 }
 
+// === Git Integration Functions ===
+
+async function gitCommitScript(filePath, commitMessage, metadata = {}) {
+  try {
+    const gitDir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    
+    // Add file to git
+    await execAsync(`git add "${fileName}"`, { cwd: gitDir });
+    
+    // Create commit with metadata
+    const fullMessage = `${commitMessage}
+
+Environment: ${metadata.env || 'unknown'}
+User: ${metadata.user || 'system'}
+Timestamp: ${new Date().toISOString()}
+Objects: ${metadata.objects || 'unknown'}
+Action: ${metadata.action || 'unknown'}`;
+    
+    const { stdout } = await execAsync(`git commit -m "${fullMessage.replace(/"/g, '\\"')}"`, { cwd: gitDir });
+    
+    // Get the commit hash
+    const { stdout: commitHash } = await execAsync('git rev-parse HEAD', { cwd: gitDir });
+    
+    return {
+      success: true,
+      commitHash: commitHash.trim(),
+      message: stdout
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+async function getGitHistory(filePath, limit = 50) {
+  try {
+    const gitDir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    
+    const { stdout } = await execAsync(
+      `git log --oneline -n ${limit} --follow --format="%H|%ai|%an|%ae|%s" -- "${fileName}"`,
+      { cwd: gitDir }
+    );
+    
+    if (!stdout.trim()) {
+      return { success: true, history: [] };
+    }
+    
+    const history = stdout.trim().split('\n').map(line => {
+      const [hash, date, author, email, ...messageParts] = line.split('|');
+      return {
+        hash: hash.trim(),
+        date: date.trim(),
+        author: author.trim(),
+        email: email.trim(),
+        message: messageParts.join('|').trim(),
+        shortHash: hash.substring(0, 8)
+      };
+    });
+    
+    return { success: true, history };
+  } catch (error) {
+    return { success: false, error: error.message, history: [] };
+  }
+}
+
+async function getObjectChangeHistory(objectType, schema, name, limit = 20) {
+  try {
+    const scriptsDir = path.join(__dirname, 'scripts');
+    const pattern = `*${schema}*${name}*`;
+    
+    // Search for files related to this object
+    const { stdout } = await execAsync(
+      `git log --oneline -n ${limit} --all --format="%H|%ai|%an|%s" --grep="${schema}.${name}" --grep="${name}"`,
+      { cwd: __dirname }
+    );
+    
+    let history = [];
+    
+    if (stdout.trim()) {
+      history = stdout.trim().split('\n').map(line => {
+        const [hash, date, author, ...messageParts] = line.split('|');
+        return {
+          hash: hash.trim(),
+          date: date.trim(),
+          author: author.trim(),
+          message: messageParts.join('|').trim(),
+          shortHash: hash.substring(0, 8)
+        };
+      });
+    }
+    
+    // Also search for file-based history
+    const fileHistory = await getObjectFileHistory(objectType, schema, name, limit);
+    
+    // Merge and sort by date
+    const allHistory = [...history, ...fileHistory.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+    
+    return { success: true, history: allHistory.slice(0, limit) };
+  } catch (error) {
+    return { success: false, error: error.message, history: [] };
+  }
+}
+
+async function getObjectFileHistory(objectType, schema, name, limit = 20) {
+  try {
+    const scriptsDir = path.join(__dirname, 'scripts');
+    
+    // Search for files that might contain this object
+    const searchPatterns = [
+      `*${name}*`,
+      `*${schema}_${name}*`,
+      `*${schema}.${name}*`,
+      `*${objectType}_${name}*`
+    ];
+    
+    let allHistory = [];
+    
+    for (const pattern of searchPatterns) {
+      try {
+        const { stdout } = await execAsync(
+          `git log --oneline -n ${limit} --all --format="%H|%ai|%an|%s" -- "${pattern}.sql"`,
+          { cwd: scriptsDir }
+        );
+        
+        if (stdout.trim()) {
+          const history = stdout.trim().split('\n').map(line => {
+            const [hash, date, author, ...messageParts] = line.split('|');
+            return {
+              hash: hash.trim(),
+              date: date.trim(),
+              author: author.trim(),
+              message: messageParts.join('|').trim(),
+              shortHash: hash.substring(0, 8),
+              pattern: pattern
+            };
+          });
+          allHistory.push(...history);
+        }
+      } catch (error) {
+        // Continue with next pattern if this one fails
+      }
+    }
+    
+    return { success: true, history: allHistory };
+  } catch (error) {
+    return { success: false, error: error.message, history: [] };
+  }
+}
+
+async function getCommitDiff(commitHash) {
+  try {
+    const { stdout } = await execAsync(`git show ${commitHash} --format="%H|%ai|%an|%ae|%s" --name-status`, { cwd: __dirname });
+    
+    const lines = stdout.split('\n');
+    const [hash, date, author, email, ...messageParts] = lines[0].split('|');
+    
+    const files = [];
+    let diffContent = '';
+    let inDiff = false;
+    
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.match(/^[AMD]\s+/)) {
+        const [status, filePath] = line.split('\t');
+        files.push({ status, path: filePath });
+      } else if (line.startsWith('diff --git')) {
+        inDiff = true;
+        diffContent += line + '\n';
+      } else if (inDiff) {
+        diffContent += line + '\n';
+      }
+    }
+    
+    return {
+      success: true,
+      commit: {
+        hash: hash.trim(),
+        date: date.trim(),
+        author: author.trim(),
+        email: email.trim(),
+        message: messageParts.join('|').trim(),
+        shortHash: hash.substring(0, 8)
+      },
+      files,
+      diff: diffContent
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 // POST /ddl/apply - execute provided implementation script (single batch)
 app.post('/ddl/apply', express.json(), async (req, res) => {
   const { env, script } = req.body || {};
@@ -1315,11 +1607,44 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
     }
     
     if (created) await pool.close();
+    
+    // gather optional metadata
+    const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
+    
+    // Save script to Git if not a dry run
+    if (!dryRun) {
+      try {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const scriptFileName = `${timestamp}_implementation_${env}.sql`;
+        const scriptPath = path.join(__dirname, 'scripts', scriptFileName);
+        
+        // Ensure scripts directory exists
+        if (!fs.existsSync(path.dirname(scriptPath))) {
+          fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+        }
+        
+        // Write script to file
+        fs.writeFileSync(scriptPath, script);
+        
+        // Commit to Git
+        const gitResult = await gitCommitScript(scriptPath, `Implementation script applied to ${env}`, {
+          env,
+          user: meta.user || 'system',
+          action: 'implementation',
+          objects: req.body.objects || 'multiple',
+          correlationId: meta.correlationId
+        });
+        
+        meta.gitCommitHash = gitResult.commitHash;
+      } catch (gitError) {
+        console.log('Git commit error:', gitError);
+        // Don't fail the entire operation if Git fails
+      }
+    }
+    
     // write audit
-  // gather optional metadata
-  const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
-  writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!dryRun, success: true, rowsAffected: totalRowsAffected, scriptPreview: script.substring(0, 1000) }, meta));
-    return res.json({ success: true, dryRun: !!dryRun, recordset: lastResult?.recordset, rowsAffected: totalRowsAffected });
+    writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'apply', env, dryRun: !!dryRun, success: true, rowsAffected: totalRowsAffected, scriptPreview: script.substring(0, 1000) }, meta));
+    return res.json({ success: true, dryRun: !!dryRun, recordset: lastResult?.recordset, rowsAffected: totalRowsAffected, gitCommitHash: meta.gitCommitHash });
   } catch (e) {
     // audit failure
   const metaErr = { user: req.body && req.body.user || req.headers['x-user'] || null, correlationId: req.body && req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body && req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
@@ -1357,6 +1682,39 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
     }
     
     if (created) await pool.close();
+    
+    // Save rollback script to filesystem and commit to Git (if not dry run)
+    if (!dryRun) {
+      try {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+        const user = req.body.user || req.headers['x-user'] || 'unknown';
+        const correlationId = req.body.correlationId || req.headers['x-correlation-id'] || '';
+        const filename = `${timestamp}_rollback_${env}_${user}_${correlationId.substring(0, 8) || 'manual'}.sql`;
+        const scriptPath = path.join(__dirname, 'scripts', filename);
+        
+        // Ensure scripts directory exists
+        if (!fs.existsSync(path.join(__dirname, 'scripts'))) {
+          fs.mkdirSync(path.join(__dirname, 'scripts'), { recursive: true });
+        }
+        
+        // Write rollback script to file
+        fs.writeFileSync(scriptPath, script, 'utf8');
+        
+        // Commit to Git with metadata
+        await gitCommitScript(filename, {
+          environment: env,
+          user: user,
+          action: 'rollback',
+          correlationId: correlationId,
+          timestamp: new Date().toISOString(),
+          rowsAffected: totalRowsAffected
+        });
+      } catch (gitError) {
+        console.error('Git commit error for rollback:', gitError);
+        // Don't fail the rollback if Git commit fails
+      }
+    }
+    
   const metaRb = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
   writeAudit(Object.assign({ timestamp: new Date().toISOString(), action: 'rollback', env, dryRun: !!dryRun, success: true, rowsAffected: totalRowsAffected, scriptPreview: script.substring(0, 1000) }, metaRb));
     return res.json({ success: true, dryRun: !!dryRun, recordset: lastResult?.recordset, rowsAffected: totalRowsAffected });
@@ -1413,3 +1771,33 @@ app.post('/audit/log', express.json(), async (req, res) => {
     return res.status(500).json({ success: false, message: e.message });
   }
 });
+
+// Basic test route
+app.get('/api/test-basic', (req, res) => {
+  res.json({ message: 'Basic test working', timestamp: new Date().toISOString() });
+});
+
+// Simple Git History API
+app.get('/api/git/history', async (req, res) => {
+  try {
+    const { stdout } = await execAsync('git log --oneline -n 10 --format="%H|%ai|%an|%s"', { cwd: __dirname });
+    
+    const history = stdout.trim().split('\n').map(line => {
+      const [hash, date, author, ...messageParts] = line.split('|');
+      return {
+        hash: hash?.trim(),
+        date: date?.trim(), 
+        author: author?.trim(),
+        message: messageParts.join('|').trim(),
+        shortHash: hash?.substring(0, 8)
+      };
+    });
+    
+    res.json({ success: true, history });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Start the server
+app.listen(3000, () => console.log('Server running on http://localhost:3000'));
