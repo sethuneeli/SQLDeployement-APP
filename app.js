@@ -143,187 +143,6 @@ app.get('/test-after-git', (req, res) => {
   res.json({ message: 'Route after git-update works!' });
 });
 
-// ===================================================================
-// SIMPLIFIED GIT INTEGRATION FOR SCRIPT TRACKING
-// ===================================================================
-
-console.log('Registering Git routes...');
-
-// Simple test route first
-app.get('/api/git-simple-test', (req, res) => {
-  console.log('Simple test route hit');
-  res.json({ message: 'Simple Git test working', timestamp: new Date().toISOString() });
-});
-
-console.log('Simple test route registered');
-
-// Git status and basic info
-app.get('/api/git/status', async (req, res) => {
-  console.log('Git status route hit');
-  try {
-    // Check if scripts directory exists
-    const scriptsDir = path.join(__dirname, 'scripts');
-    if (!fs.existsSync(scriptsDir)) {
-      fs.mkdirSync(scriptsDir, { recursive: true });
-    }
-    
-    const scriptFiles = fs.readdirSync(scriptsDir).length;
-    
-    // Get recent Git commits
-    const { stdout } = await execAsync('git log --oneline -n 5 --format="%h|%ai|%an|%s"', { cwd: __dirname });
-    const recentCommits = stdout.trim() ? stdout.trim().split('\n').map(line => {
-      const [hash, date, author, ...messageParts] = line.split('|');
-      return {
-        hash: hash?.trim(),
-        date: date?.trim(),
-        author: author?.trim(),
-        message: messageParts.join('|').trim()
-      };
-    }) : [];
-    
-    res.json({
-      success: true,
-      status: 'active',
-      totalScripts: scriptFiles,
-      recentCommits
-    });
-  } catch (error) {
-    res.json({ success: false, error: error.message, totalScripts: 0, recentCommits: [] });
-  }
-});
-
-// Git history endpoint
-app.get('/api/git/history', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 20;
-    const { stdout } = await execAsync(`git log --oneline -n ${limit} --format="%H|%ai|%an|%ae|%s"`, { cwd: __dirname });
-    
-    if (!stdout.trim()) {
-      return res.json({ success: true, history: [] });
-    }
-    
-    const history = stdout.trim().split('\n').map(line => {
-      const [hash, date, author, email, ...messageParts] = line.split('|');
-      const message = messageParts.join('|');
-      
-      // Extract action and environment from message
-      const actionMatch = message.match(/^(\w+):/);
-      const envMatch = message.match(/(DEV|TEST|LIVE)/);
-      
-      return {
-        hash: hash?.trim(),
-        shortHash: hash?.substring(0, 8),
-        date: date?.trim(),
-        author: author?.trim(),
-        email: email?.trim(),
-        message: message?.trim(),
-        action: actionMatch ? actionMatch[1].toLowerCase() : null,
-        environment: envMatch ? envMatch[0] : null
-      };
-    });
-    
-    res.json({ success: true, history });
-  } catch (error) {
-    res.json({ success: false, error: error.message, history: [] });
-  }
-});
-
-// Object-specific Git history
-app.get('/api/git/object-history/:type/:schema/:name', async (req, res) => {
-  try {
-    const { type, schema, name } = req.params;
-    const limit = parseInt(req.query.limit) || 20;
-    const searchPattern = `${schema}.${name}`;
-    
-    const { stdout } = await execAsync(
-      `git log --oneline -n ${limit} --format="%H|%ai|%an|%ae|%s" --grep="${searchPattern}"`,
-      { cwd: __dirname }
-    );
-    
-    if (!stdout.trim()) {
-      return res.json({ success: true, history: [] });
-    }
-    
-    const history = stdout.trim().split('\n').map(line => {
-      const [hash, date, author, email, ...messageParts] = line.split('|');
-      const message = messageParts.join('|');
-      
-      return {
-        hash: hash?.trim(),
-        shortHash: hash?.substring(0, 8),
-        date: date?.trim(),
-        author: author?.trim(),
-        email: email?.trim(),
-        message: message?.trim(),
-        objectType: type,
-        schema,
-        name
-      };
-    });
-    
-    res.json({ success: true, history });
-  } catch (error) {
-    res.json({ success: false, error: error.message, history: [] });
-  }
-});
-
-// Git commit details
-app.get('/api/git/commit/:hash', async (req, res) => {
-  try {
-    const { hash } = req.params;
-    
-    // Get commit details
-    const { stdout: commitInfo } = await execAsync(
-      `git show ${hash} --format="%H|%ai|%an|%ae|%s" --name-only`,
-      { cwd: __dirname }
-    );
-    
-    const lines = commitInfo.split('\n');
-    const [fullHash, date, author, email, ...messageParts] = lines[0].split('|');
-    const message = messageParts.join('|');
-    
-    // Get changed files
-    const files = lines.slice(1).filter(line => line.trim() && !line.startsWith('diff'));
-    
-    // Get diff
-    const { stdout: diff } = await execAsync(`git show ${hash}`, { cwd: __dirname });
-    
-    // Parse metadata from commit message
-    const metadata = {};
-    const metadataPatterns = {
-      environment: /Environment:\s*([^\n]+)/i,
-      user: /User:\s*([^\n]+)/i,
-      action: /Action:\s*([^\n]+)/i,
-      correlationId: /Correlation ID:\s*([^\n]+)/i,
-      rowsAffected: /Rows Affected:\s*([^\n]+)/i
-    };
-    
-    for (const [key, pattern] of Object.entries(metadataPatterns)) {
-      const match = message.match(pattern);
-      if (match) {
-        metadata[key] = match[1].trim();
-      }
-    }
-    
-    res.json({
-      success: true,
-      commit: {
-        hash: fullHash?.trim(),
-        shortHash: fullHash?.substring(0, 8),
-        date: date?.trim(),
-        author: author?.trim(),
-        email: email?.trim(),
-        message: message?.trim(),
-        metadata
-      },
-      files,
-      diff
-    });
-  } catch (error) {
-    res.json({ success: false, error: error.message });
-  }
-});
-
 // SQL connect endpoint
 app.get('/sql-connect/:env', async (req, res) => {
   const env = req.params.env;
@@ -2477,6 +2296,167 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
     return res.status(500).json({ success: false, message: e.message });
   }
 });
+
+// Add Git routes just before server start
+try {
+  console.log('Adding final Git routes...');
+  
+  // Simple working test route
+  app.get('/api/simple-working-test', (req, res) => {
+    res.json({ message: 'This route definitely works!', timestamp: new Date().toISOString() });
+  });
+  
+  // Git status endpoint
+  app.get('/api/git/status', async (req, res) => {
+    console.log('Git status route accessed');
+    try {
+      const scriptsDir = path.join(__dirname, 'scripts');
+      if (!fs.existsSync(scriptsDir)) {
+        fs.mkdirSync(scriptsDir, { recursive: true });
+      }
+      
+      const scriptFiles = fs.readdirSync(scriptsDir).length;
+      
+      res.json({
+        success: true,
+        status: 'active',
+        totalScripts: scriptFiles,
+        message: 'Git status working'
+      });
+    } catch (error) {
+      console.error('Git status error:', error);
+      res.json({ success: false, error: error.message });
+    }
+  });
+
+  // Git history endpoint
+  app.get('/api/git/history', async (req, res) => {
+    console.log('Git history route accessed');
+    try {
+      const limit = parseInt(req.query.limit) || 20;
+      
+      try {
+        const { stdout } = await execAsync(`git log --oneline -n ${limit} --format="%H|%ai|%an|%ae|%s"`, { cwd: __dirname });
+        
+        if (!stdout.trim()) {
+          return res.json({ success: true, history: [] });
+        }
+        
+        const history = stdout.trim().split('\n').map(line => {
+          const [hash, date, author, email, ...messageParts] = line.split('|');
+          const message = messageParts.join('|');
+          
+          return {
+            hash: hash?.trim(),
+            shortHash: hash?.substring(0, 8),
+            date: date?.trim(),
+            author: author?.trim(),
+            email: email?.trim(),
+            message: message?.trim()
+          };
+        });
+        
+        res.json({ success: true, history });
+      } catch (gitError) {
+        console.log('Git command failed:', gitError.message);
+        res.json({ success: true, history: [], message: 'No git history available' });
+      }
+    } catch (error) {
+      console.error('Git history error:', error);
+      res.json({ success: false, error: error.message, history: [] });
+    }
+  });
+
+  // Object-specific Git history
+  app.get('/api/git/object-history/:type/:schema/:name', async (req, res) => {
+    console.log('Git object history route accessed');
+    try {
+      const { type, schema, name } = req.params;
+      const limit = parseInt(req.query.limit) || 20;
+      const searchPattern = `${schema}.${name}`;
+      
+      try {
+        const { stdout } = await execAsync(
+          `git log --oneline -n ${limit} --format="%H|%ai|%an|%ae|%s" --grep="${searchPattern}"`,
+          { cwd: __dirname }
+        );
+        
+        if (!stdout.trim()) {
+          return res.json({ success: true, history: [] });
+        }
+        
+        const history = stdout.trim().split('\n').map(line => {
+          const [hash, date, author, email, ...messageParts] = line.split('|');
+          const message = messageParts.join('|');
+          
+          return {
+            hash: hash?.trim(),
+            shortHash: hash?.substring(0, 8),
+            date: date?.trim(),
+            author: author?.trim(),
+            email: email?.trim(),
+            message: message?.trim(),
+            objectType: type,
+            schema,
+            name
+          };
+        });
+        
+        res.json({ success: true, history });
+      } catch (gitError) {
+        console.log('Git object history command failed:', gitError.message);
+        res.json({ success: true, history: [], message: 'No git history available for this object' });
+      }
+    } catch (error) {
+      console.error('Git object history error:', error);
+      res.json({ success: false, error: error.message, history: [] });
+    }
+  });
+
+  // Git commit details
+  app.get('/api/git/commit/:hash', async (req, res) => {
+    console.log('Git commit details route accessed');
+    try {
+      const { hash } = req.params;
+      
+      try {
+        const { stdout: commitInfo } = await execAsync(
+          `git show ${hash} --format="%H|%ai|%an|%ae|%s" --name-only`,
+          { cwd: __dirname }
+        );
+        
+        const lines = commitInfo.split('\n');
+        const [fullHash, date, author, email, ...messageParts] = lines[0].split('|');
+        const message = messageParts.join('|');
+        
+        const files = lines.slice(1).filter(line => line.trim() && !line.startsWith('diff'));
+        
+        res.json({
+          success: true,
+          commit: {
+            hash: fullHash?.trim(),
+            shortHash: fullHash?.substring(0, 8),
+            date: date?.trim(),
+            author: author?.trim(),
+            email: email?.trim(),
+            message: message?.trim()
+          },
+          files
+        });
+      } catch (gitError) {
+        console.log('Git commit details command failed:', gitError.message);
+        res.json({ success: false, error: 'Commit not found or git not available' });
+      }
+    } catch (error) {
+      console.error('Git commit details error:', error);
+      res.json({ success: false, error: error.message });
+    }
+  });
+  
+  console.log('Git routes added successfully');
+} catch (error) {
+  console.error('Error adding routes:', error);
+}
 
 // Start the server
 app.listen(3000, () => console.log('Server running on http://localhost:3000'));
