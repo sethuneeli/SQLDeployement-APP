@@ -686,12 +686,12 @@
         const name = obj.name || obj.table || '';
         if (!name) return alert('Object name missing');
         
-        const title = `Change History: ${type} ${schema}.${name}`;
+        const title = `Git Change History: ${type} ${schema}.${name}`;
         document.getElementById('objectHistoryTitle').innerText = title;
         document.getElementById('objectHistoryModal').style.display = 'block';
         
         // Show loading in history list
-        document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
+        document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading Git change history...</div>';
         document.getElementById('commitDetails').textContent = 'Select a commit above to view details and diff';
         
         try {
@@ -699,13 +699,13 @@
           const result = await response.json();
           
           if (!result.success) {
-            document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Error: ${escapeHtml(result.message || 'Failed to load history')}</div>`;
+            document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Error: ${escapeHtml(result.error || 'Failed to load Git history')}</div>`;
             return;
           }
           
           renderGitHistory(result.history || []);
         } catch (error) {
-          console.error('Error loading object history:', error);
+          console.error('Error loading Git object history:', error);
           document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Error: ${escapeHtml(error.message)}</div>`;
         }
       }
@@ -714,22 +714,26 @@
         const historyList = document.getElementById('historyList');
         
         if (!commits || commits.length === 0) {
-          historyList.innerHTML = '<div style="padding:12px;text-align:center;color:#666">No change history found for this object</div>';
+          historyList.innerHTML = '<div style="padding:12px;text-align:center;color:#666">No Git change history found for this object</div>';
           return;
         }
         
         let html = '';
         commits.forEach((commit, index) => {
           const date = new Date(commit.date).toLocaleString();
+          const actionBadge = commit.action ? `<span class="diff-highlight" style="background-color: ${commit.action === 'rollback' ? '#ffebee' : '#e8f5e8'}; color: ${commit.action === 'rollback' ? '#c62828' : '#2e7d32'}">${commit.action.toUpperCase()}</span>` : '';
+          const envBadge = commit.environment ? `<span class="diff-highlight" style="background-color: #e3f2fd; color: #1976d2">ENV: ${commit.environment}</span>` : '';
+          
           html += `
             <div class="history-item" data-commit="${escapeHtml(commit.hash)}">
-              <div class="history-commit">${escapeHtml(commit.hash.substring(0, 8))}</div>
+              <div class="history-commit">${escapeHtml(commit.shortHash)}</div>
               <div class="history-meta">
                 <strong>${escapeHtml(commit.author)}</strong> on ${date}
-                ${commit.environment ? `<span class="diff-highlight">ENV: ${escapeHtml(commit.environment)}</span>` : ''}
-                ${commit.action ? `<span class="diff-highlight">ACTION: ${escapeHtml(commit.action)}</span>` : ''}
+                ${actionBadge}
+                ${envBadge}
+                ${commit.user ? `<span class="diff-highlight">USER: ${escapeHtml(commit.user)}</span>` : ''}
               </div>
-              <div class="history-message">${escapeHtml(commit.message)}</div>
+              <div class="history-message">${escapeHtml(commit.message.split('\\n')[0])}</div>
             </div>
           `;
         });
@@ -744,12 +748,12 @@
             item.classList.add('selected');
             
             const commitHash = item.dataset.commit;
-            await loadCommitDetails(commitHash);
+            await loadGitCommitDetails(commitHash);
           });
         });
       }
       
-      async function loadCommitDetails(commitHash) {
+      async function loadGitCommitDetails(commitHash) {
         const commitDetails = document.getElementById('commitDetails');
         commitDetails.textContent = 'Loading commit details...';
         
@@ -758,39 +762,55 @@
           const result = await response.json();
           
           if (!result.success) {
-            commitDetails.textContent = `Error: ${result.message || 'Failed to load commit details'}`;
+            commitDetails.textContent = `Error: ${result.error || 'Failed to load commit details'}`;
             return;
           }
           
           const commit = result.commit;
-          let details = `Commit: ${commit.hash}
+          let details = `Git Commit: ${commit.hash}
 Author: ${commit.author}
 Date: ${new Date(commit.date).toLocaleString()}
 Message: ${commit.message}
 
 `;
           
-          if (commit.metadata) {
+          // Display parsed metadata if available
+          if (commit.metadata && Object.keys(commit.metadata).length > 0) {
             details += `Metadata:
-Environment: ${commit.metadata.environment || 'N/A'}
-User: ${commit.metadata.user || 'N/A'}
-Action: ${commit.metadata.action || 'N/A'}
-Correlation ID: ${commit.metadata.correlationId || 'N/A'}
-Rows Affected: ${commit.metadata.rowsAffected || 'N/A'}
-
+`;
+            Object.entries(commit.metadata).forEach(([key, value]) => {
+              if (value && value !== 'N/A') {
+                details += `${key}: ${value}
+`;
+              }
+            });
+            details += `
 `;
           }
           
-          if (commit.diff) {
-            details += `Diff:
-${commit.diff}`;
+          // Display changed files
+          if (result.files && result.files.length > 0) {
+            details += `Changed Files:
+`;
+            result.files.forEach(file => {
+              details += `- ${file}
+`;
+            });
+            details += `
+`;
+          }
+          
+          // Display diff if available
+          if (result.diff) {
+            details += `Git Diff:
+${result.diff}`;
           } else {
             details += 'No diff available for this commit.';
           }
           
           commitDetails.textContent = details;
         } catch (error) {
-          console.error('Error loading commit details:', error);
+          console.error('Error loading Git commit details:', error);
           commitDetails.textContent = `Error: ${error.message}`;
         }
       }
