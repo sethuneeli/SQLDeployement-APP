@@ -6,7 +6,7 @@
 -- Test Case: Rollback table_lead deployment
 -- =============================================
 
-USE [AutopilotProd]
+USE [AutopilotDev]
 GO
 
 PRINT 'Starting table_lead rollback process...'

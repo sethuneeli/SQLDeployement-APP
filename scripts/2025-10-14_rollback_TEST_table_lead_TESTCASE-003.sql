@@ -8,7 +8,7 @@
 -- Related Scripts: 2025-10-14_implementation_TEST_table_lead_TESTCASE-003.sql
 -- =============================================
 
-USE [AutopilotProd]
+USE [AutopilotTest]
 GO
 
 PRINT '=========================================='

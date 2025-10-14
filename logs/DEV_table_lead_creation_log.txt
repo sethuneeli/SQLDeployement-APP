@@ -7,7 +7,7 @@
 -- =============================================
 
 -- EXECUTION STARTED: 2025-10-14 11:45:00
--- Database: AutopilotProd
+-- Database: AutopilotDev
 -- Environment: DEV
 -- User: System
 -- Action: CREATE TABLE dbo.table_lead

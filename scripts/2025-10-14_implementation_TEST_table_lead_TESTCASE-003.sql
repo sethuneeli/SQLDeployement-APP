@@ -8,7 +8,7 @@
 -- Related Scripts: 006_create_lead_table.sql
 -- =============================================
 
-USE [AutopilotProd]
+USE [AutopilotTest]
 GO
 
 PRINT '=========================================='

@@ -13,7 +13,7 @@
 -- DEV Environment: table_lead Creation
 -- Test Case: TESTCASE-003 DEV Phase
 
-USE [AutopilotProd]
+USE [AutopilotDev]
 GO
 
 -- Execute the DEV table creation

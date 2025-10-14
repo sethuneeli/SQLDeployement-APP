@@ -7,7 +7,7 @@
 -- Test Case: Move table_lead from DEV to TEST
 -- =============================================
 
-USE [AutopilotProd]
+USE [AutopilotDev]
 GO
 
 -- Check if table exists before creating
