@@ -143,6 +143,161 @@ app.get('/test-after-git', (req, res) => {
   res.json({ message: 'Route after git-update works!' });
 });
 
+// Real Git API endpoints
+app.get('/api/git/history', async (req, res) => {
+  console.log('Git history endpoint accessed');
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Get Git log with proper format
+    const { stdout } = await execAsync(`git log --oneline -n ${limit} --format="%H|%ai|%an|%ae|%s"`, { cwd: __dirname });
+    
+    if (!stdout.trim()) {
+      return res.json({ success: true, history: [] });
+    }
+    
+    const history = stdout.trim().split('\n').map(line => {
+      const [hash, date, author, email, ...messageParts] = line.split('|');
+      const message = messageParts.join('|');
+      
+      return {
+        hash: hash?.trim(),
+        shortHash: hash?.substring(0, 8),
+        date: date?.trim(),
+        author: author?.trim(),
+        email: email?.trim(),
+        message: message?.trim()
+      };
+    });
+    
+    res.json({ success: true, history });
+  } catch (error) {
+    console.error('Git history error:', error);
+    res.json({ success: false, error: error.message, history: [] });
+  }
+});
+
+app.get('/api/git/status', async (req, res) => {
+  console.log('Git status endpoint accessed');
+  try {
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    const fs = require('fs');
+    const path = require('path');
+    
+    const scriptsDir = path.join(__dirname, 'scripts');
+    if (!fs.existsSync(scriptsDir)) {
+      fs.mkdirSync(scriptsDir, { recursive: true });
+    }
+    
+    const scriptFiles = fs.readdirSync(scriptsDir).length;
+    
+    // Get recent Git commits
+    const { stdout } = await execAsync('git log --oneline -n 5 --format="%h|%ai|%an|%s"', { cwd: __dirname });
+    const recentCommits = stdout.trim() ? stdout.trim().split('\n').map(line => {
+      const [hash, date, author, ...messageParts] = line.split('|');
+      return {
+        hash: hash?.trim(),
+        date: date?.trim(),
+        author: author?.trim(),
+        message: messageParts.join('|').trim()
+      };
+    }) : [];
+    
+    res.json({
+      success: true,
+      status: 'active',
+      totalScripts: scriptFiles,
+      recentCommits
+    });
+  } catch (error) {
+    console.error('Git status error:', error);
+    res.json({ success: false, error: error.message, totalScripts: 0, recentCommits: [] });
+  }
+});
+
+app.get('/api/git/object-history/:type/:schema/:name', (req, res) => {
+  console.log('Git object history endpoint accessed');
+  const { type, schema, name } = req.params;
+  res.json({
+    success: true,
+    history: []
+  });
+});
+
+// Git diff endpoint for specific commits
+app.get('/api/git/diff/:hash', async (req, res) => {
+  console.log('Git diff endpoint accessed');
+  try {
+    const { hash } = req.params;
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Get the diff for the specific commit
+    const { stdout } = await execAsync(`git show ${hash} --format="%H|%ai|%an|%ae|%s"`, { cwd: __dirname });
+    
+    if (!stdout.trim()) {
+      return res.json({ success: false, error: 'Commit not found' });
+    }
+    
+    const lines = stdout.trim().split('\n');
+    const commitInfo = lines[0].split('|');
+    
+    // Extract commit details
+    const commit = {
+      hash: commitInfo[0]?.trim(),
+      date: commitInfo[1]?.trim(),
+      author: commitInfo[2]?.trim(),
+      email: commitInfo[3]?.trim(),
+      message: commitInfo.slice(4).join('|').trim()
+    };
+    
+    // Extract diff content (everything after the first line)
+    const diffContent = lines.slice(1).join('\n');
+    
+    res.json({
+      success: true,
+      commit,
+      diff: diffContent
+    });
+  } catch (error) {
+    console.error('Git diff error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Git diff for specific file
+app.get('/api/git/diff/:hash/file/:filepath', async (req, res) => {
+  console.log('Git file diff endpoint accessed');
+  try {
+    const { hash, filepath } = req.params;
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Get the diff for the specific file in the commit
+    const { stdout } = await execAsync(`git show ${hash} -- "${filepath}"`, { cwd: __dirname });
+    
+    if (!stdout.trim()) {
+      return res.json({ success: false, error: 'File or commit not found' });
+    }
+    
+    res.json({
+      success: true,
+      filepath,
+      diff: stdout
+    });
+  } catch (error) {
+    console.error('Git file diff error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 // SQL connect endpoint
 app.get('/sql-connect/:env', async (req, res) => {
   const env = req.params.env;
@@ -166,10 +321,24 @@ app.get('/sql-connect/:env', async (req, res) => {
 // Execute SQL script endpoint
 app.post('/execute-sql', async (req, res) => {
   const { env, script } = req.body || {};
-  if (!env || !script) return res.status(400).json({ success: false, message: 'env and script are required' });
+  // Normalize script: can arrive as string, array (PS Get-Content), or object
+  const normalizeScript = (s) => {
+    if (typeof s === 'string') return s;
+    if (Array.isArray(s)) return s.join('\n');
+    if (s && typeof s === 'object') {
+      // Attempt common wrappers
+      if (typeof s.value === 'string') return s.value;
+      if (Array.isArray(s.value)) return s.value.join('\n');
+      try { return String(s); } catch { return ''; }
+    }
+    return '';
+  };
+  const scriptText = normalizeScript(script);
+
+  if (!env || !scriptText) return res.status(400).json({ success: false, message: 'env and script are required' });
   if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
   // No duplicate destructive checks here; handled by checkDestructiveAllowed earlier
-  if (script.length > 20000) return res.status(400).json({ success: false, message: 'Script too long' });
+  if (scriptText.length > 20000) return res.status(400).json({ success: false, message: 'Script too long' });
 
   try {
     // helper to execute script and handle 'GO' batch separators
@@ -201,7 +370,7 @@ app.post('/execute-sql', async (req, res) => {
       await pool.connect();
       created = true;
     }
-    const result = await executeScriptOnPool(pool, script);
+    const result = await executeScriptOnPool(pool, scriptText);
     if (created) await pool.close();
     return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
   } catch (e) {
