@@ -381,6 +381,7 @@ app.post('/execute-sql', async (req, res) => {
 });
 
 // Execute SQL script by filename in ./scripts (avoids large JSON payloads)
+console.log('Registering route: POST /execute-sql-file');
 app.post('/execute-sql-file', async (req, res) => {
   try {
     const { env, filename } = req.body || {};
