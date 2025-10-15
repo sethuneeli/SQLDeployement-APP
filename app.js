@@ -125,6 +125,10 @@ const sqlConfigs = {
   LIVE: {
     user: 'test_user', password: 'P@ssword123$', server: 'dbms-aipoc01', database: 'AutopilotProd', options: { encrypt: false, trustServerCertificate: false }
   },
+  // Alias for production to match common terminology
+  PROD: {
+    user: 'test_user', password: 'P@ssword123$', server: 'dbms-aipoc01', database: 'AutopilotProd', options: { encrypt: false, trustServerCertificate: false }
+  },
 };
 
 // connection pools per environment (DEV/TEST/LIVE)
