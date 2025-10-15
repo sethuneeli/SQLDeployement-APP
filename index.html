@@ -284,7 +284,7 @@
       <strong id="objectHistoryTitle">Object Change History</strong>
       <div style="display:flex;gap:8px;align-items:center">
         <button id="refreshHistoryBtn" title="Refresh history" style="padding:6px 8px;border-radius:6px;border:1px solid #ddd;background:#fff">🔄 Refresh</button>
-        <button id="closeObjectHistory" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
+        <button id="closeObjectHistory" onclick="if(window.closeObjectHistory){window.closeObjectHistory()}" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
       </div>
     </div>
     <div style="height:calc(100% - 40px);display:flex;flex-direction:column">
@@ -1871,14 +1871,30 @@ ${result.diff}`;
       const modal = document.getElementById('objectHistoryModal');
       const closeBtn = document.getElementById('closeObjectHistory');
       const refreshBtn = document.getElementById('refreshHistoryBtn');
+      if (!modal) return;
+
+      // Global robust close function
+      window.closeObjectHistory = function() {
+        try {
+          modal.style.setProperty('display','none','important');
+          modal.setAttribute('aria-hidden','true');
+          modal.style.visibility='hidden';
+          modal.style.opacity='0';
+          modal.style.pointerEvents='none';
+        } catch(e) { console.warn('closeObjectHistory failed', e); }
+        try {
+          // Clear contents back to initial state
+          const hist = document.getElementById('historyList');
+          const det = document.getElementById('commitDetails');
+          if (hist) hist.innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
+          if (det) det.textContent = 'Select a commit above to view details and diff';
+        } catch(e) {}
+      };
       
       if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-          modal.style.display = 'none';
-          // Clear content
-          document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
-          document.getElementById('commitDetails').textContent = 'Select a commit above to view details and diff';
-        });
+        try { closeBtn.removeEventListener('click', window._ohCloseHandler || (()=>{})); } catch(e){}
+        window._ohCloseHandler = () => window.closeObjectHistory();
+        closeBtn.addEventListener('click', window._ohCloseHandler);
       }
       
       if (refreshBtn) {
@@ -1889,6 +1905,23 @@ ${result.diff}`;
           if (match) {
             const [, type, schema, name] = match;
             await showObjectHistory({ type, schema, name });
+          }
+        });
+      }
+
+      // Overlay click to close (if user clicks outside inner content)
+      try {
+        if (modal._overlayHandler) modal.removeEventListener('click', modal._overlayHandler);
+      } catch(e){}
+      modal._overlayHandler = (ev) => { if (ev.target === modal) window.closeObjectHistory(); };
+      modal.addEventListener('click', modal._overlayHandler);
+
+      // ESC key to close (single global binding)
+      if (!document._hasOHKeyHandler) {
+        document._hasOHKeyHandler = true;
+        document.addEventListener('keydown', (ev) => {
+          if ((ev.key === 'Escape' || ev.key === 'Esc')) {
+            try { if (modal && window.getComputedStyle(modal).display !== 'none') window.closeObjectHistory(); } catch(e){}
           }
         });
       }
