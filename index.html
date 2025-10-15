@@ -721,6 +721,18 @@
         const name = obj.name || obj.table || '';
         if (!name) return alert('Object name missing');
         
+        // If modal was removed, recreate from cached template
+        if (!document.getElementById('objectHistoryModal') && window._ohTemplateHtml) {
+          try {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = window._ohTemplateHtml;
+            const newModal = wrapper.firstElementChild;
+            document.body.appendChild(newModal);
+            // rebind behaviors
+            initObjectHistoryModal();
+          } catch (e) { console.error('Failed to recreate object history modal', e); }
+        }
+
         const title = `Git Change History: ${type} ${schema}.${name}`;
         document.getElementById('objectHistoryTitle').innerText = title;
         document.getElementById('objectHistoryModal').style.display = 'block';
@@ -1873,6 +1885,9 @@ ${result.diff}`;
       const refreshBtn = document.getElementById('refreshHistoryBtn');
       if (!modal) return;
 
+        // cache the original template for restoration if removed
+        try { if (!window._ohTemplateHtml) window._ohTemplateHtml = modal.outerHTML; } catch(e){}
+
       // Global robust close function
       window.closeObjectHistory = function() {
         try {
@@ -1889,6 +1904,16 @@ ${result.diff}`;
           if (hist) hist.innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
           if (det) det.textContent = 'Select a commit above to view details and diff';
         } catch(e) {}
+
+          // As a last resort, remove the modal entirely and recreate on next open
+          try {
+            setTimeout(() => {
+              const current = document.getElementById('objectHistoryModal');
+              if (current && window.getComputedStyle(current).display !== 'none') {
+                try { window._ohTemplateHtml = current.outerHTML; current.remove(); window._ohRemoved = true; } catch(e) { console.warn('remove modal failed', e); }
+              }
+            }, 100);
+          } catch(e) {}
       };
       
       if (closeBtn) {
