@@ -50,6 +50,50 @@ app.get('/:filename.html', (req, res) => {
   });
 });
 
+// ---- Feature Flags (Enable GPT-5 for all clients) ----
+const FEATURES_PATH = path.join(__dirname, 'tools', 'features.json');
+function readJsonFile(p, fallback) {
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch(_) { return fallback; }
+}
+function writeJsonFile(p, obj) {
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch(_) {}
+  fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8');
+}
+
+// initialize and ensure GPT-5 is enabled globally
+let features = readJsonFile(FEATURES_PATH, null);
+if (!features) {
+  features = { gpt5Enabled: true, updatedAt: new Date().toISOString() };
+  writeJsonFile(FEATURES_PATH, features);
+} else if (!features.gpt5Enabled) {
+  features.gpt5Enabled = true;
+  features.updatedAt = new Date().toISOString();
+  writeJsonFile(FEATURES_PATH, features);
+}
+
+// API to read current features
+app.get('/api/features', (req, res) => {
+  try {
+    features = readJsonFile(FEATURES_PATH, features || {});
+  } catch(_) {}
+  res.json({ success: true, features });
+});
+
+// API to update a feature flag (optional; secured via environment in real systems)
+app.post('/api/features', express.json(), (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (!key) return res.status(400).json({ success: false, message: 'key is required' });
+    features = Object.assign({}, readJsonFile(FEATURES_PATH, features || {}));
+    features[key] = value;
+    features.updatedAt = new Date().toISOString();
+    writeJsonFile(FEATURES_PATH, features);
+    res.json({ success: true, features });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
 // Environment configuration endpoints
 app.get('/api/environments', (req, res) => {
   // Return current environment configurations
