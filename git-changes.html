@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Changes - SQL Portal</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        
+        .header p {
+            margin: 5px 0 0 0;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .control-group label {
+            font-weight: 600;
+            color: #333;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        select, input, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        .refresh-btn {
+            background: #2196F3;
+        }
+        
+        .refresh-btn:hover {
+            background: #1976D2;
+        }
+        
+        .status-bar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-info {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+        
+        .commits-panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .commits-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .commits-header h2 {
+            margin: 0;
+            color: #333;
+        }
+        
+        .commits-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .commit-item {
+            padding: 15px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .commit-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .commit-item.selected {
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .commit-hash {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #666;
+        }
+        
+        .commit-message {
+            font-weight: 600;
+            margin: 5px 0;
+            color: #333;
+        }
+        
+        .commit-meta {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .badge {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .badge.implementation {
+            background: #e8f5e8;
+            color: #2e7d32;
+        }
+        
+        .badge.rollback {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .details-panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .details-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .details-header h2 {
+            margin: 0;
+            color: #333;
+        }
+        
+        .details-content {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .details-placeholder {
+            text-align: center;
+            color: #666;
+            padding: 40px;
+        }
+        
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px 20px;
+            margin-bottom: 20px;
+        }
+        
+        .metadata-label {
+            font-weight: 600;
+            color: #666;
+        }
+        
+        .metadata-value {
+            color: #333;
+        }
+        
+        .diff-section {
+            margin-top: 20px;
+        }
+        
+        .diff-header {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .diff-content {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .status-info {
+                justify-content: space-around;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔄 Git Changes Management</h1>
+        <p>Track and visualize all database script changes and deployments</p>
+    </div>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>Environment Filter</label>
+            <select id="envFilter">
+                <option value="">All Environments</option>
+                <option value="DEV">Development</option>
+                <option value="TEST">Test</option>
+                <option value="LIVE">Production</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Action Filter</label>
+            <select id="actionFilter">
+                <option value="">All Actions</option>
+                <option value="implementation">Implementation</option>
+                <option value="rollback">Rollback</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Object Search</label>
+            <input type="text" id="objectFilter" placeholder="Search objects (e.g., dbo.TableEmp)">
+        </div>
+        
+        <div class="control-group">
+            <label>User Filter</label>
+            <input type="text" id="userFilter" placeholder="Filter by user...">
+        </div>
+        
+        <div class="control-group">
+            <label>Limit</label>
+            <select id="limitSelect">
+                <option value="20">20 commits</option>
+                <option value="50">50 commits</option>
+                <option value="100">100 commits</option>
+            </select>
+        </div>
+        
+        <button class="refresh-btn" onclick="loadGitChanges()">🔄 Refresh</button>
+        <button onclick="searchObjectHistory()">🔍 Object History</button>
+        <button onclick="window.location.href='/'">🏠 Back to Portal</button>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status-info">
+            <div class="status-item">
+                <div class="status-value" id="totalCommits">-</div>
+                <div class="status-label">Total Commits</div>
+            </div>
+            <div class="status-item">
+                <div class="status-value" id="totalScripts">-</div>
+                <div class="status-label">Script Files</div>
+            </div>
+            <div class="status-item">
+                <div class="status-value" id="repoStatus">-</div>
+                <div class="status-label">Repository</div>
+            </div>
+        </div>
+        <div id="lastUpdated">Loading...</div>
+    </div>
+    
+    <div class="main-content">
+        <div class="commits-panel">
+            <div class="commits-header">
+                <h2>📋 Commit History</h2>
+                <span id="commitCount">0 commits</span>
+            </div>
+            <div class="commits-list" id="commitsList">
+                <div class="loading">Loading commit history...</div>
+            </div>
+        </div>
+        
+        <div class="details-panel">
+            <div class="details-header">
+                <h2>📄 Commit Details</h2>
+            </div>
+            <div class="details-content" id="detailsContent">
+                <div class="details-placeholder">
+                    Select a commit from the list to view details, metadata, and diff information.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allCommits = [];
+        let selectedCommit = null;
+
+        // Load Git changes on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadGitStatus();
+            loadGitChanges();
+            
+            // Add event listeners for filters
+            document.getElementById('envFilter').addEventListener('change', filterCommits);
+            document.getElementById('actionFilter').addEventListener('change', filterCommits);
+            document.getElementById('userFilter').addEventListener('input', filterCommits);
+            document.getElementById('objectFilter').addEventListener('input', filterCommits);
+            document.getElementById('limitSelect').addEventListener('change', loadGitChanges);
+        });
+
+        async function loadGitStatus() {
+            try {
+                const response = await fetch('/api/git/status');
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('totalScripts').textContent = result.totalScripts || 0;
+                    document.getElementById('repoStatus').textContent = result.status || 'Unknown';
+                    document.getElementById('lastUpdated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+                } else {
+                    console.error('Failed to load Git status:', result.error);
+                }
+            } catch (error) {
+                console.error('Error loading Git status:', error);
+                document.getElementById('repoStatus').textContent = 'Error';
+            }
+        }
+
+        async function loadGitChanges() {
+            const limit = document.getElementById('limitSelect').value;
+            const commitsList = document.getElementById('commitsList');
+            
+            commitsList.innerHTML = '<div class="loading">Loading commit history...</div>';
+            
+            try {
+                const response = await fetch(`/api/git/history?limit=${limit}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    allCommits = result.history || [];
+                    document.getElementById('totalCommits').textContent = allCommits.length;
+                    filterCommits();
+                } else {
+                    commitsList.innerHTML = `<div class="error">Error loading commits: ${result.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Error loading Git changes:', error);
+                commitsList.innerHTML = `<div class="error">Error loading commits: ${error.message}</div>`;
+            }
+        }
+
+        function filterCommits() {
+            const envFilter = document.getElementById('envFilter').value;
+            const actionFilter = document.getElementById('actionFilter').value;
+            const userFilter = document.getElementById('userFilter').value.toLowerCase();
+            const objectFilter = document.getElementById('objectFilter').value.toLowerCase();
+            
+            let filteredCommits = allCommits.filter(commit => {
+                // Environment filter
+                if (envFilter && !commit.message.includes(envFilter)) {
+                    return false;
+                }
+                
+                // Action filter
+                if (actionFilter && !commit.message.toLowerCase().includes(actionFilter)) {
+                    return false;
+                }
+                
+                // User filter
+                if (userFilter && !commit.author.toLowerCase().includes(userFilter) && 
+                    !commit.message.toLowerCase().includes(userFilter)) {
+                    return false;
+                }
+                
+                // Object filter
+                if (objectFilter && !commit.message.toLowerCase().includes(objectFilter)) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            renderCommits(filteredCommits);
+        }
+
+        function renderCommits(commits) {
+            const commitsList = document.getElementById('commitsList');
+            const commitCount = document.getElementById('commitCount');
+            
+            if (commits.length === 0) {
+                commitsList.innerHTML = '<div class="details-placeholder">No commits found matching the current filters.</div>';
+                commitCount.textContent = '0 commits';
+                return;
+            }
+            
+            commitCount.textContent = `${commits.length} commits`;
+            
+            const html = commits.map(commit => {
+                const date = new Date(commit.date).toLocaleDateString();
+                const time = new Date(commit.date).toLocaleTimeString();
+                
+                // Extract action from commit message
+                const actionMatch = commit.message.match(/^(IMPLEMENTATION|ROLLBACK):/);
+                const action = actionMatch ? actionMatch[1].toLowerCase() : 'unknown';
+                
+                // Extract environment
+                const envMatch = commit.message.match(/(DEV|TEST|LIVE)/);
+                const environment = envMatch ? envMatch[0] : '';
+                
+                return `
+                    <div class="commit-item" onclick="selectCommit('${commit.hash}', this)">
+                        <div class="commit-hash">${commit.shortHash}</div>
+                        <div class="commit-message">${escapeHtml(commit.message.split('\\n')[0])}</div>
+                        <div class="commit-meta">
+                            <span>👤 ${escapeHtml(commit.author)}</span>
+                            <span>📅 ${date} ${time}</span>
+                            ${action !== 'unknown' ? `<span class="badge ${action}">${action}</span>` : ''}
+                            ${environment ? `<span class="badge">${environment}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            commitsList.innerHTML = html;
+        }
+
+        async function selectCommit(commitHash, element) {
+            // Update UI selection
+            document.querySelectorAll('.commit-item').forEach(item => item.classList.remove('selected'));
+            element.classList.add('selected');
+            
+            const detailsContent = document.getElementById('detailsContent');
+            detailsContent.innerHTML = '<div class="loading">Loading commit details...</div>';
+            
+            try {
+                const response = await fetch(`/api/git/commit/${commitHash}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderCommitDetails(result.commit, result.files, result.diff);
+                } else {
+                    detailsContent.innerHTML = `<div class="error">Error loading commit details: ${result.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Error loading commit details:', error);
+                detailsContent.innerHTML = `<div class="error">Error loading commit details: ${error.message}</div>`;
+            }
+        }
+
+        function renderCommitDetails(commit, files, diff) {
+            const detailsContent = document.getElementById('detailsContent');
+            
+            // Parse metadata from commit message
+            const metadata = {};
+            const metadataPatterns = {
+                'Script': /Script:\\s*([^\\n]+)/i,
+                'Environment': /Environment:\\s*([^\\n]+)/i,
+                'User': /User:\\s*([^\\n]+)/i,
+                'Action': /Action:\\s*([^\\n]+)/i,
+                'Timestamp': /Timestamp:\\s*([^\\n]+)/i,
+                'Correlation ID': /Correlation ID:\\s*([^\\n]+)/i,
+                'Rows Affected': /Rows Affected:\\s*([^\\n]+)/i,
+                'Objects': /Objects:\\s*([^\\n]+)/i
+            };
+            
+            for (const [key, pattern] of Object.entries(metadataPatterns)) {
+                const match = commit.message.match(pattern);
+                if (match) {
+                    metadata[key] = match[1].trim();
+                }
+            }
+            
+            const filesHtml = files && files.length > 0 ? 
+                files.map(file => `<span class="badge">${escapeHtml(file)}</span>`).join(' ') : 
+                'No files changed';
+            
+            const metadataHtml = Object.entries(metadata).map(([key, value]) => `
+                <div class="metadata-label">${key}:</div>
+                <div class="metadata-value">${escapeHtml(value)}</div>
+            `).join('');
+            
+            const html = `
+                <div class="metadata-grid">
+                    <div class="metadata-label">Hash:</div>
+                    <div class="metadata-value">${commit.hash}</div>
+                    
+                    <div class="metadata-label">Author:</div>
+                    <div class="metadata-value">${escapeHtml(commit.author)} &lt;${escapeHtml(commit.email)}&gt;</div>
+                    
+                    <div class="metadata-label">Date:</div>
+                    <div class="metadata-value">${new Date(commit.date).toLocaleString()}</div>
+                    
+                    <div class="metadata-label">Files:</div>
+                    <div class="metadata-value">${filesHtml}</div>
+                    
+                    ${metadataHtml}
+                </div>
+                
+                <div class="diff-section">
+                    <div class="diff-header">📝 Commit Message</div>
+                    <div class="diff-content">${escapeHtml(commit.message)}</div>
+                </div>
+                
+                ${diff ? `
+                <div class="diff-section">
+                    <div class="diff-header">🔄 Changes (Diff)</div>
+                    <div class="diff-content">${escapeHtml(diff)}</div>
+                </div>
+                ` : ''}
+            `;
+            
+            detailsContent.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function searchObjectHistory() {
+            const objectFilter = document.getElementById('objectFilter').value.trim();
+            if (!objectFilter) {
+                alert('Please enter an object name to search (e.g., dbo.TableEmp)');
+                return;
+            }
+            
+            // Parse object name
+            const parts = objectFilter.split('.');
+            if (parts.length !== 2) {
+                alert('Please enter object name in format: schema.objectname (e.g., dbo.TableEmp)');
+                return;
+            }
+            
+            const [schema, name] = parts;
+            const type = 'TABLE'; // Default to TABLE, could be enhanced to detect type
+            
+            try {
+                const response = await fetch(`/api/git/object-history/${encodeURIComponent(type)}/${encodeURIComponent(schema)}/${encodeURIComponent(name)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    allCommits = result.history || [];
+                    document.getElementById('totalCommits').textContent = allCommits.length;
+                    document.getElementById('commitCount').textContent = `${allCommits.length} commits for ${objectFilter}`;
+                    renderCommits(allCommits);
+                    
+                    if (allCommits.length === 0) {
+                        alert(`No Git history found for object: ${objectFilter}`);
+                    }
+                } else {
+                    alert(`Error searching object history: ${result.error}`);
+                }
+            } catch (error) {
+                console.error('Error searching object history:', error);
+                alert(`Error searching object history: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>
