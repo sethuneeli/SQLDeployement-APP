@@ -9,8 +9,9 @@ const { promisify } = require('util');
 
 const execAsync = promisify(exec);
 const app = express();
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Increase body size limits to support larger SQL scripts posted as JSON
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(express.json({ limit: '5mb' }));
 
 // Add request logging for debugging
 app.use((req, res, next) => {
@@ -375,6 +376,57 @@ app.post('/execute-sql', async (req, res) => {
     return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
   } catch (e) {
     console.error('/execute-sql error', e && e.stack ? e.stack : e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Execute SQL script by filename in ./scripts (avoids large JSON payloads)
+app.post('/execute-sql-file', async (req, res) => {
+  try {
+    const { env, filename } = req.body || {};
+    if (!env || !filename) return res.status(400).json({ success: false, message: 'env and filename are required' });
+    if (!sqlConfigs[env]) return res.status(400).json({ success: false, message: 'Invalid environment' });
+
+    // Basic security: prevent path traversal
+    const safeName = path.basename(filename);
+    const fullPath = path.join(__dirname, 'scripts', safeName);
+    if (!fs.existsSync(fullPath)) return res.status(404).json({ success: false, message: 'Script file not found' });
+
+    const scriptText = fs.readFileSync(fullPath, 'utf8');
+    if (!scriptText) return res.status(400).json({ success: false, message: 'Script file is empty' });
+    if (scriptText.length > 200000) return res.status(400).json({ success: false, message: 'Script too long' });
+
+    // GO-aware execution helper
+    async function executeScriptOnPool(pool, text) {
+      const parts = text.split(/^\s*GO\s*$/gim).map(p => p.trim()).filter(Boolean);
+      let lastRecordset = null;
+      const rowsAffectedAll = [];
+      for (const p of parts) {
+        try {
+          const r = await pool.request().batch(p);
+          lastRecordset = (r && r.recordset) ? r.recordset : lastRecordset;
+          if (r && r.rowsAffected) rowsAffectedAll.push(...r.rowsAffected);
+        } catch (inner) {
+          const r2 = await pool.request().query(p);
+          lastRecordset = (r2 && r2.recordset) ? r2.recordset : lastRecordset;
+          if (r2 && r2.rowsAffected) rowsAffectedAll.push(...r2.rowsAffected);
+        }
+      }
+      return { recordset: lastRecordset, rowsAffected: rowsAffectedAll };
+    }
+
+    let pool = pools[env];
+    let created = false;
+    if (!pool || !pool.connected) {
+      pool = new sql.ConnectionPool(sqlConfigs[env]);
+      await pool.connect();
+      created = true;
+    }
+    const result = await executeScriptOnPool(pool, scriptText);
+    if (created) await pool.close();
+    return res.json({ success: true, recordset: result.recordset, rowsAffected: result.rowsAffected });
+  } catch (e) {
+    console.error('/execute-sql-file error', e && e.stack ? e.stack : e);
     return res.status(500).json({ success: false, message: e.message });
   }
 });
