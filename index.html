@@ -284,7 +284,7 @@
       <strong id="objectHistoryTitle">Object Change History</strong>
       <div style="display:flex;gap:8px;align-items:center">
         <button id="refreshHistoryBtn" title="Refresh history" style="padding:6px 8px;border-radius:6px;border:1px solid #ddd;background:#fff">🔄 Refresh</button>
-        <button id="closeObjectHistory" onclick="if(window.closeObjectHistory){window.closeObjectHistory()}" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
+  <button id="closeObjectHistory" onclick="try{var m=(this.closest?this.closest('#objectHistoryModal'):document.getElementById('objectHistoryModal'));if(m){try{m.style.setProperty('display','none','important');}catch(__) { m.style.display='none'; } m.style.visibility='hidden'; m.style.opacity='0'; m.style.pointerEvents='none';}}catch(_){}; if(window.closeObjectHistory){try{window.closeObjectHistory(event||null);}catch(e){try{window.closeObjectHistory();}catch(_e){}}} return false;" style="background:#ff6b6b;color:white;padding:6px 10px;border-radius:6px;border:none">Close</button>
       </div>
     </div>
     <div style="height:calc(100% - 40px);display:flex;flex-direction:column">
@@ -720,6 +720,13 @@
         const schema = obj.schema || 'dbo';
         const name = obj.name || obj.table || '';
         if (!name) return alert('Object name missing');
+        // Dedupe any duplicate modals (keep the first in DOM order)
+        try {
+          const dupes = document.querySelectorAll('#objectHistoryModal');
+          if (dupes && dupes.length > 1) {
+            for (let i = 1; i < dupes.length; i++) { try { dupes[i].remove(); } catch(e){} }
+          }
+        } catch(e) { /* ignore */ }
         
         // If modal was removed, recreate from cached template
         if (!document.getElementById('objectHistoryModal') && window._ohTemplateHtml) {
@@ -733,9 +740,11 @@
           } catch (e) { console.error('Failed to recreate object history modal', e); }
         }
 
-        const title = `Git Change History: ${type} ${schema}.${name}`;
+  const title = `Git Change History: ${type} ${schema}.${name}`;
         document.getElementById('objectHistoryTitle').innerText = title;
-        document.getElementById('objectHistoryModal').style.display = 'block';
+  const _ohm = document.getElementById('objectHistoryModal');
+  _ohm.style.display = 'block';
+  try { _ohm.style.setProperty('z-index','10001','important'); _ohm.style.pointerEvents='auto'; _ohm.style.opacity='1'; _ohm.style.visibility='visible'; } catch(e) {}
         
         // Show loading in history list
         document.getElementById('historyList').innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading Git change history...</div>';
@@ -1888,32 +1897,49 @@ ${result.diff}`;
         // cache the original template for restoration if removed
         try { if (!window._ohTemplateHtml) window._ohTemplateHtml = modal.outerHTML; } catch(e){}
 
-      // Global robust close function
-      window.closeObjectHistory = function() {
+      // Global robust close function (closes the specific clicked modal if possible, otherwise all)
+      window.closeObjectHistory = function(evt) {
         try {
-          modal.style.setProperty('display','none','important');
-          modal.setAttribute('aria-hidden','true');
-          modal.style.visibility='hidden';
-          modal.style.opacity='0';
-          modal.style.pointerEvents='none';
+          const modals = Array.from(document.querySelectorAll('#objectHistoryModal'));
+          // If an event with a target inside a modal was provided, close that modal first
+          let prioritized = [];
+          if (evt && evt.target && typeof evt.target.closest === 'function') {
+            const hit = evt.target.closest('#objectHistoryModal');
+            if (hit) {
+              prioritized = [hit, ...modals.filter(m => m !== hit)];
+            }
+          }
+          const list = prioritized.length ? prioritized : modals.length ? modals : [modal];
+          list.forEach(m => {
+            try {
+              m.style.setProperty('display','none','important');
+              m.setAttribute('aria-hidden','true');
+              m.style.visibility='hidden';
+              m.style.opacity='0';
+              m.style.pointerEvents='none';
+            } catch(e) { /* ignore */ }
+          });
         } catch(e) { console.warn('closeObjectHistory failed', e); }
         try {
-          // Clear contents back to initial state
+          // Clear contents back to initial state (on the first/primary modal)
           const hist = document.getElementById('historyList');
           const det = document.getElementById('commitDetails');
           if (hist) hist.innerHTML = '<div style="padding:12px;text-align:center;color:#666">Loading change history...</div>';
           if (det) det.textContent = 'Select a commit above to view details and diff';
         } catch(e) {}
 
-          // As a last resort, remove the modal entirely and recreate on next open
-          try {
-            setTimeout(() => {
-              const current = document.getElementById('objectHistoryModal');
-              if (current && window.getComputedStyle(current).display !== 'none') {
-                try { window._ohTemplateHtml = current.outerHTML; current.remove(); window._ohRemoved = true; } catch(e) { console.warn('remove modal failed', e); }
-              }
-            }, 100);
-          } catch(e) {}
+        // As a last resort, remove any still-visible modals and cache their HTML
+        try {
+          setTimeout(() => {
+            const all = Array.from(document.querySelectorAll('#objectHistoryModal'));
+            all.forEach(cur => {
+              try {
+                const cs = window.getComputedStyle(cur);
+                if (cs && cs.display !== 'none') { window._ohTemplateHtml = cur.outerHTML; cur.remove(); window._ohRemoved = true; }
+              } catch(e){ /* ignore */ }
+            });
+          }, 120);
+        } catch(e) {}
       };
       
       if (closeBtn) {
@@ -1946,9 +1972,17 @@ ${result.diff}`;
         document._hasOHKeyHandler = true;
         document.addEventListener('keydown', (ev) => {
           if ((ev.key === 'Escape' || ev.key === 'Esc')) {
-            try { if (modal && window.getComputedStyle(modal).display !== 'none') window.closeObjectHistory(); } catch(e){}
+            try { window.closeObjectHistory(ev); } catch(e){}
           }
         });
+      }
+
+      // Global click fallback: if a Close button is clicked anywhere, close the nearest modal
+      if (!document._hasOHCloseClickHandler) {
+        document._hasOHCloseClickHandler = true;
+        document.addEventListener('click', function(e){
+          try { if (e && e.target && e.target.id === 'closeObjectHistory') { window.closeObjectHistory(e); } } catch(_){}
+        }, true);
       }
     }
     
