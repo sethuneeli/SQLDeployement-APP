@@ -219,6 +219,9 @@
       <input id="metaUser" placeholder="user (optional)" />
       <input id="metaCorrelation" placeholder="correlationId (optional)" />
       <input id="metaGitCommit" placeholder="gitCommit (optional)" />
+      <label title="When enabled, the server will auto-create any missing schemas referenced in the implementation script during Apply (ignored on dry-run)." style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="autoCreateSchemas" /> Auto-create missing schemas
+      </label>
     </div>
   </section>
 
@@ -751,30 +754,34 @@
         document.getElementById('commitDetails').textContent = 'Select a commit above to view details and diff';
         
         try {
-          // Use general history endpoint and filter client-side since object-specific endpoint has issues
+          // Prefer object-specific history (server greps full commit message/body)
+          const objectResp = await fetch(`/api/git/object-history/${encodeURIComponent(type)}/${encodeURIComponent(schema)}/${encodeURIComponent(name)}?limit=100`);
+          const objectResult = await objectResp.json();
+
+          if (objectResult && objectResult.success && Array.isArray(objectResult.history)) {
+            const hist = objectResult.history || [];
+            if (hist.length) {
+              document.getElementById('historyList').innerHTML = `<div style="padding:12px;text-align:center;color:#4CAF50">Found ${hist.length} commits for ${schema}.${name}</div>`;
+              renderGitHistory(hist);
+              return;
+            }
+          }
+
+          // Fallback: use general history and client-side filter on subject
           const response = await fetch(`/api/git/history?limit=100`);
           const result = await response.json();
-          
           if (!result.success) {
-            // Fallback: try to show results from all commits and filter by searching the message
-            document.getElementById('historyList').innerHTML = `<div style="padding:12px;color:#d32f2f">Git API unavailable. Searching local commits...</div>`;
-            // Try to simulate the search by filtering commit messages
+            document.getElementById('historyList').innerHTML = `<div style=\"padding:12px;color:#d32f2f\">Git API unavailable. Searching local commits...</div>`;
             showLocalGitHistory(schema, name);
             return;
           }
-          
-          // Filter commits that mention this object
           const objectPattern = `${schema}.${name}`;
-          const filteredHistory = (result.history || []).filter(commit => 
-            commit.message && commit.message.toLowerCase().includes(objectPattern.toLowerCase())
-          );
-          
+          const filteredHistory = (result.history || []).filter(commit => commit.message && commit.message.toLowerCase().includes(objectPattern.toLowerCase()));
           if (filteredHistory.length === 0) {
-            document.getElementById('historyList').innerHTML = `<div style="padding:12px;text-align:center;color:#666">No Git history found for ${objectPattern}. Found ${(result.history || []).length} total commits.</div>`;
+            document.getElementById('historyList').innerHTML = `<div style=\"padding:12px;text-align:center;color:#666\">No Git history found for ${objectPattern}. Found ${(result.history || []).length} total commits.</div>`;
           } else {
-            document.getElementById('historyList').innerHTML = `<div style="padding:12px;text-align:center;color:#4CAF50">Found ${filteredHistory.length} commits for ${objectPattern}</div>`;
+            document.getElementById('historyList').innerHTML = `<div style=\"padding:12px;text-align:center;color:#4CAF50\">Found ${filteredHistory.length} commits for ${objectPattern}</div>`;
           }
-          
           renderGitHistory(filteredHistory);
         } catch (error) {
           console.error('Error loading Git object history:', error);
@@ -1165,12 +1172,12 @@ ${result.diff}`;
           planDiv.appendChild(card);
         });
 
-        // build combined implementation script and dry-run validate
-        const combined = planJson.plans.map(p => p.implementation).join('\n\n');
-        const combinedRollback = planJson.plans.map(p => p.rollback).reverse().join('\n\n');
+  // build combined implementation script with GO separators so each plan runs in its own batch
+  const combined = planJson.plans.map(p => p.implementation).filter(Boolean).join('\nGO\n\n') + (planJson.plans.length ? '\nGO' : '');
+  const combinedRollback = planJson.plans.map(p => p.rollback).reverse().filter(Boolean).join('\nGO\n\n') + (planJson.plans.length ? '\nGO' : '');
         if (!combined.trim()) { planDiv.appendChild(document.createElement('div')).textContent = 'No implementation to validate'; return; }
 
-        const respValidate = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script: combined }) });
+  const respValidate = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ env, script: combined, autoCreateSchemas: getAutoSchemasFlag() }) });
         const valJson = await respValidate.json();
         const resBlock = document.createElement('div'); resBlock.style.marginTop = '8px';
         if (valJson.success) {
@@ -1180,7 +1187,7 @@ ${result.diff}`;
           applyBtn.addEventListener('click', async () => {
             if (!confirm('Apply implementation to ' + env + '? This will execute DDL changes.')) return;
             const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
-            const respApply = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combined }, meta)) });
+            const respApply = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combined, autoCreateSchemas: getAutoSchemasFlag() }, meta)) });
             const appJson = await respApply.json();
             if (appJson.success) { resBlock.innerHTML = '<div style="color:green">Apply succeeded</div>'; } else { resBlock.innerHTML = '<div style="color:red">Apply failed: '+(appJson.message||'')+'</div>'; }
           });
@@ -1770,7 +1777,9 @@ ${result.diff}`;
           validateBtn.disabled = true;
           try {
             const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
-            const respVal = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl }, meta)) });
+            // Include selected objects so server commits/logs have schema.name for grep/history
+            const selectedObjects = (typeof objects !== 'undefined' && Array.isArray(objects)) ? objects.map(o => `${o.schema}.${o.name}`) : [];
+            const respVal = await fetch('/ddl/apply?dryRun=true', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl, autoCreateSchemas: getAutoSchemasFlag(), objects: selectedObjects }, meta)) });
             const vj = await respVal.json();
             alert(vj.success ? 'Validation succeeded' : ('Validation failed: ' + (vj.message || JSON.stringify(vj))));
           } catch (e) { alert('Validation error: ' + e.message); }
@@ -1788,7 +1797,8 @@ ${result.diff}`;
           applyBtn.disabled = true; applyStatus.innerHTML = 'Applying...';
           try {
             const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
-            const respA = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl }, meta)) });
+            const selectedObjects = (typeof objects !== 'undefined' && Array.isArray(objects)) ? objects.map(o => `${o.schema}.${o.name}`) : [];
+            const respA = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl, autoCreateSchemas: getAutoSchemasFlag(), objects: selectedObjects }, meta)) });
             // try parse as JSON, fall back to text
             let bodyText = ''; let parsed = null;
             try { parsed = await respA.json(); } catch (e) { bodyText = await respA.text(); }
@@ -1988,6 +1998,27 @@ ${result.diff}`;
     
     // Initialize the object history modal
     initObjectHistoryModal();
+
+    // --- Auto-create schemas toggle: persistence + helper ---
+    function getAutoSchemasFlag() {
+      try {
+        const el = document.getElementById('autoCreateSchemas');
+        return !!(el && el.checked);
+      } catch(e) { return false; }
+    }
+    // Initialize checkbox from localStorage and persist changes
+    (function initAutoSchemaToggle(){
+      const key = 'autoCreateSchemas';
+      try {
+        const el = document.getElementById('autoCreateSchemas');
+        if (!el) return;
+        const saved = localStorage.getItem(key);
+        if (saved === 'true' || saved === 'false') el.checked = (saved === 'true');
+        el.addEventListener('change', () => {
+          try { localStorage.setItem(key, el.checked ? 'true' : 'false'); } catch(_) {}
+        });
+      } catch(_) {}
+    })();
   </script>
   </div>
 </body>

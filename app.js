@@ -269,13 +269,10 @@ app.get('/api/git/status', async (req, res) => {
   }
 });
 
-app.get('/api/git/object-history/:type/:schema/:name', (req, res) => {
-  console.log('Git object history endpoint accessed');
-  const { type, schema, name } = req.params;
-  res.json({
-    success: true,
-    history: []
-  });
+app.get('/api/git/object-history/:type/:schema/:name', (req, res, next) => {
+  console.log('Git object history endpoint accessed (forwarding to final handler)');
+  // Forward to the enhanced handler declared later in the file
+  return next();
 });
 
 // Git diff endpoint for specific commits
@@ -1206,12 +1203,19 @@ app.post('/ddl/diff', express.json(), async (req, res) => {
           const tgtCols = await getDbColumns(toEnv, schema, name);
           
           if (tgtCols.length === 0) {
-            // Table doesn't exist in target, create it
-            const s = await getCreateTableScript(fromEnv, schema, name);
-            implementation = s.create + '\n' + (s.extras || '');
-            rollback = `DROP TABLE [${schema}].[${name}]`;
-            notes.push('Table does not exist in target; create and drop generated');
-            diffSummary.added = srcCols.map(c => c.name);
+            if (srcCols.length === 0) {
+              // Source table also missing; avoid emitting invalid empty CREATE TABLE
+              implementation = '-- Source table not found in source environment; no implementation generated';
+              rollback = '-- No rollback needed';
+              notes.push('Source table not found; skipping');
+            } else {
+              // Table doesn't exist in target, create it from source definition
+              const s = await getCreateTableScript(fromEnv, schema, name);
+              implementation = s.create + '\n' + (s.extras || '');
+              rollback = `DROP TABLE [${schema}].[${name}]`;
+              notes.push('Table does not exist in target; create and drop generated');
+              diffSummary.added = srcCols.map(c => c.name);
+            }
           } else {
             // Table exists, generate ALTER statements based on differences
             const srcMap = {}; srcCols.forEach(c => srcMap[c.name.toLowerCase()] = c);
@@ -1329,8 +1333,28 @@ app.post('/ddl/diff', express.json(), async (req, res) => {
       }
     }
     // combined scripts with proper batch separators
-    const combinedImpl = plans.map(p => p.implementation).filter(impl => impl && impl.trim() !== '--').join('\nGO\n\n') + (plans.some(p => p.implementation && p.implementation.trim() !== '--') ? '\nGO' : '');
-    const combinedRollback = plans.map(p => p.rollback).filter(rb => rb && rb.trim() !== '--').reverse().join('\nGO\n\n') + (plans.some(p => p.rollback && p.rollback.trim() !== '--') ? '\nGO' : '');
+    let combinedImpl = plans
+      .map(p => p.implementation)
+      .filter(impl => impl && impl.trim() !== '--')
+      .join('\nGO\n\n');
+    if (plans.some(p => p.implementation && p.implementation.trim() !== '--')) {
+      combinedImpl += '\nGO';
+    }
+    const combinedRollback = plans
+      .map(p => p.rollback)
+      .filter(rb => rb && rb.trim() !== '--')
+      .reverse()
+      .join('\nGO\n\n') + (plans.some(p => p.rollback && p.rollback.trim() !== '--') ? '\nGO' : '');
+
+    // Auto-create schemas in target: unconditionally prepend conditional CREATE SCHEMA for non-dbo schemas referenced by objects
+    try {
+      const candidateSchemas = Array.from(new Set((Array.isArray(objects) ? objects : []).map(o => (o && o.schema ? String(o.schema) : 'dbo').trim()).filter(s => s && s.toLowerCase() !== 'dbo')));
+      const safeSchemas = candidateSchemas.filter(s => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+      if (safeSchemas.length > 0) {
+        const preface = safeSchemas.map(sch => `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'${sch}') EXEC('CREATE SCHEMA [${sch}]');`).join('\n');
+        combinedImpl = preface + (combinedImpl ? '\nGO\n\n' + combinedImpl : '\nGO');
+      }
+    } catch (_) { /* ignore */ }
 
     // build dependency graph for topological order (best-effort)
     const nameKey = p => (p.type || 'TABLE') + '::' + (p.schema || '') + '::' + (p.name || '');
@@ -1361,7 +1385,7 @@ app.post('/ddl/diff', express.json(), async (req, res) => {
     }
     const applyOrder = order.map(k => nodes[k] ? nodes[k].obj : null).filter(Boolean).map(o => ({ type: o.type, schema: o.schema, name: o.name }));
 
-    return res.json({ success: true, plans, combinedImpl, combinedRollback, applyOrder });
+  return res.json({ success: true, plans, combinedImpl, combinedRollback, applyOrder });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -1502,6 +1526,81 @@ function buildColumnDefinition(col) {
   }
   
   return typeDef;
+}
+
+// Helper: execute a multi-batch script with optional dry-run using an explicit transaction
+async function executeScriptBatches(pool, scriptText, dryRun) {
+  // Split on GO batch separators, trim and filter empties
+  const initial = (scriptText || '')
+    .split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i)
+    .filter(b => b && b.trim());
+
+  // Ensure any CREATE VIEW appears at the start of its own batch
+  const batches = [];
+  const viewRegex = /\bCREATE\s+(?:OR\s+ALTER\s+)?VIEW\b/i;
+  for (let raw of initial) {
+    let batch = raw.trim();
+    const m = batch.match(viewRegex);
+    if (!m) { batches.push(batch); continue; }
+
+    const idx = m.index;
+    const pre = batch.substring(0, idx).trim();
+    const post = batch.substring(idx).trim();
+    if (!pre) { batches.push(batch); continue; }
+
+    // Remove comments from pre to check for only allowed SETs
+    const preNoComments = pre
+      .replace(/--.*$/mg, '')
+      .replace(/\/[\*][\s\S]*?[\*]\//g, '')
+      .trim();
+    const allowedPre = /^(\s*(SET\s+ANSI_NULLS\s+(ON|OFF)\s*;?)?\s*(SET\s+QUOTED_IDENTIFIER\s+(ON|OFF)\s*;?)?\s*)$/i;
+    if (preNoComments && !allowedPre.test(preNoComments)) {
+      // Split into two batches: pre (before CREATE VIEW) and post (starting at CREATE VIEW)
+      batches.push(pre);
+      batches.push(post);
+    } else {
+      // Allowed pre-statements can remain in the same batch with CREATE VIEW
+      batches.push(batch);
+    }
+  }
+  let totalRowsAffected = 0;
+  let lastResult = null;
+
+  if (dryRun) {
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
+    try {
+      for (const batch of batches) {
+        const req = new sql.Request(tx);
+        const result = await req.batch(batch);
+        lastResult = result;
+        if (Array.isArray(result.rowsAffected)) {
+          totalRowsAffected += result.rowsAffected.reduce((a, b) => a + (Number(b) || 0), 0);
+        } else if (typeof result.rowsAffected === 'number') {
+          totalRowsAffected += result.rowsAffected;
+        }
+      }
+    } catch (e) {
+      try { await tx.rollback(); } catch (_) {}
+      throw e;
+    }
+    // Always rollback so nothing persists
+    try { await tx.rollback(); } catch (_) {}
+    return { lastResult, totalRowsAffected };
+  }
+
+  // Real apply (no dry-run): execute batches directly on pool
+  for (const batch of batches) {
+    const req = new sql.Request(pool);
+    const result = await req.batch(batch);
+    lastResult = result;
+    if (Array.isArray(result.rowsAffected)) {
+      totalRowsAffected += result.rowsAffected.reduce((a, b) => a + (Number(b) || 0), 0);
+    } else if (typeof result.rowsAffected === 'number') {
+      totalRowsAffected += result.rowsAffected;
+    }
+  }
+  return { lastResult, totalRowsAffected };
 }
 
 // create implementation and rollback scripts for CREATE TABLE statements
@@ -1720,15 +1819,25 @@ async function gitCommitScript(filePath, commitMessage, metadata = {}) {
     await execAsync(`git add "${fileName}"`, { cwd: gitDir });
     
     // Create commit with metadata
-    const fullMessage = `${commitMessage}
+  const objectsList = Array.isArray(metadata.objects) ? metadata.objects.join(', ') : (metadata.objects || 'unknown');
+  const fullMessage = `${commitMessage}
 
 Environment: ${metadata.env || 'unknown'}
 User: ${metadata.user || 'system'}
 Timestamp: ${new Date().toISOString()}
-Objects: ${metadata.objects || 'unknown'}
+Objects: ${objectsList}
 Action: ${metadata.action || 'unknown'}`;
     
-    const { stdout } = await execAsync(`git commit -m "${fullMessage.replace(/"/g, '\\"')}"`, { cwd: gitDir });
+  // Build commit with multiple -m parts to avoid newline/quoting issues on Windows shells
+  let commitCmd = 'git commit';
+  const addPart = (msg) => { if (msg !== undefined && msg !== null) commitCmd += ` -m "${String(msg).replace(/"/g, '\\"')}"`; };
+  addPart(commitMessage);
+  addPart(`Environment: ${metadata.env || 'unknown'}`);
+  addPart(`User: ${metadata.user || 'system'}`);
+  addPart(`Timestamp: ${new Date().toISOString()}`);
+  addPart(`Objects: ${objectsList}`);
+  addPart(`Action: ${metadata.action || 'unknown'}`);
+  const { stdout } = await execAsync(commitCmd, { cwd: gitDir });
     
     // Get the commit hash
     const { stdout: commitHash } = await execAsync('git rev-parse HEAD', { cwd: gitDir });
@@ -1915,26 +2024,53 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
     let created = false;
     if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
     
-    // Split script by GO statements and execute each batch separately
-    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
-    let totalRowsAffected = 0;
-    let lastResult = null;
-    
-    for (const batch of batches) {
-      const trimmedBatch = batch.trim();
-      if (!trimmedBatch) continue;
-      
-      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
-      const result = await pool.request().batch(execScript);
-      lastResult = result;
-      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
-        totalRowsAffected += result.rowsAffected;
+    // Pre-flight: ensure any referenced schemas exist on target (only on real apply, gated by flag)
+    try {
+      const shouldAutoCreate = (req.body && req.body.autoCreateSchemas === true) || (req.query && String(req.query.autoCreateSchemas).toLowerCase() === 'true');
+      if (!dryRun && shouldAutoCreate && script && typeof script === 'string') {
+        // Extract schema names from common DDL/DML patterns
+        const extractSchemas = (text) => {
+          const schemas = new Set();
+          const patterns = [
+            /(?:CREATE|ALTER|DROP)\s+(?:TABLE|VIEW|PROCEDURE|FUNCTION|TRIGGER)\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig,
+            /CREATE\s+(?:UNIQUE\s+)?(?:(?:CLUSTERED|NONCLUSTERED)\s+)?INDEX\s+[\[\]\w"\.]+\s+ON\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig,
+            /ALTER\s+INDEX\s+[\[\]\w"\.]+\s+ON\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig,
+            /INSERT\s+INTO\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig,
+            /UPDATE\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig,
+            /DELETE\s+FROM\s+([\[\]"\w]+)\s*\.\s*([\[\]"\w]+)/ig
+          ];
+          patterns.forEach(re => { let m; while ((m = re.exec(text))) { let sch = m[1] || ''; sch = sch.replace(/^[\[\"]+|[\]\"]+$/g,''); if (sch) schemas.add(sch); } });
+          return Array.from(schemas);
+        };
+        const ensureSchemasExist = async (pool, names) => {
+          const isValid = (n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n);
+          for (const n of names) {
+            if (!isValid(n)) continue; // skip unsafe names
+            const r = await pool.request().input('name', sql.NVarChar, n).query('SELECT 1 AS x FROM sys.schemas WHERE name=@name');
+            const exists = r && r.recordset && r.recordset.length > 0;
+            if (!exists) {
+              // create schema safely (validated identifier)
+              await pool.request().query(`EXEC('CREATE SCHEMA [${n}]')`);
+            }
+          }
+        };
+        const schemasToEnsure = extractSchemas(script);
+        if (schemasToEnsure.length) {
+          await ensureSchemasExist(pool, schemasToEnsure);
+        }
       }
+    } catch (schemaErr) {
+      // If schema creation fails, return a clear message
+      if (created) { try { await pool.close(); } catch(_){} }
+      return res.status(500).json({ success: false, message: `Schema check/creation failed: ${schemaErr.message}` });
     }
+    
+    // Execute batches; in dry-run, use transaction+rollback to avoid breaking CREATE VIEW batch rules
+    const { lastResult, totalRowsAffected } = await executeScriptBatches(pool, script, dryRun);
     
     if (created) await pool.close();
     
-    // gather optional metadata
+  // gather optional metadata
     const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
     
     // Save script to Git if not a dry run
@@ -1990,22 +2126,8 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
     let created = false;
     if (!pool || !pool.connected) { pool = new sql.ConnectionPool(sqlConfigs[env]); await pool.connect(); created = true; }
     
-    // Split script by GO statements and execute each batch separately
-    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
-    let totalRowsAffected = 0;
-    let lastResult = null;
-    
-    for (const batch of batches) {
-      const trimmedBatch = batch.trim();
-      if (!trimmedBatch) continue;
-      
-      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
-      const result = await pool.request().batch(execScript);
-      lastResult = result;
-      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
-        totalRowsAffected += result.rowsAffected;
-      }
-    }
+    // Execute all batches with transaction-based dry-run
+    const { lastResult, totalRowsAffected } = await executeScriptBatches(pool, script, dryRun);
     
     if (created) await pool.close();
     
@@ -2177,8 +2299,21 @@ Objects: ${metadata.objects || 'N/A'}
 --- Script Preview ---
 ${scriptContent.substring(0, 500)}${scriptContent.length > 500 ? '...' : ''}`;
 
-      // Commit to Git
-      const { stdout } = await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, { cwd: __dirname });
+      // Commit to Git using multiple -m parts so Windows quoting/newlines are preserved
+      const parts = [
+        `${action.toUpperCase()}: ${env} - ${user}`,
+        `Script: ${filename}`,
+        `Environment: ${env}`,
+        `User: ${user}`,
+        `Action: ${action}`,
+        `Timestamp: ${metadata.timestamp || new Date().toISOString()}`,
+        `Correlation ID: ${metadata.correlationId || 'N/A'}`,
+        `Rows Affected: ${metadata.rowsAffected || 'N/A'}`,
+        `Objects: ${metadata.objects ? (Array.isArray(metadata.objects) ? metadata.objects.join(', ') : metadata.objects) : 'N/A'}`
+      ];
+      let commitCmd = 'git commit';
+      parts.forEach(p => { commitCmd += ` -m "${String(p).replace(/"/g, '\\"')}"`; });
+      const { stdout } = await execAsync(commitCmd, { cwd: __dirname });
       
       // Get commit hash
       const { stdout: commitHash } = await execAsync('git rev-parse HEAD', { cwd: __dirname });
@@ -2429,22 +2564,8 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
       created = true; 
     }
     
-    // Split script by GO statements and execute each batch separately
-    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
-    let totalRowsAffected = 0;
-    let lastResult = null;
-    
-    for (const batch of batches) {
-      const trimmedBatch = batch.trim();
-      if (!trimmedBatch) continue;
-      
-      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
-      const result = await pool.request().batch(execScript);
-      lastResult = result;
-      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
-        totalRowsAffected += result.rowsAffected;
-      }
-    }
+    // Execute batches with transaction-based dry-run
+    const { lastResult, totalRowsAffected } = await executeScriptBatches(pool, script, dryRun);
     
     if (created) await pool.close();
     
@@ -2533,22 +2654,7 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
       created = true; 
     }
     
-    // Split script by GO statements and execute each batch separately
-    const batches = script.split(/\r?\nGO\r?\n|\r?\nGO\s*$|^GO\s*\r?\n/i).filter(batch => batch.trim());
-    let totalRowsAffected = 0;
-    let lastResult = null;
-    
-    for (const batch of batches) {
-      const trimmedBatch = batch.trim();
-      if (!trimmedBatch) continue;
-      
-      const execScript = dryRun ? (`SET NOEXEC ON;\n${trimmedBatch}\nSET NOEXEC OFF;`) : trimmedBatch;
-      const result = await pool.request().batch(execScript);
-      lastResult = result;
-      if (result.rowsAffected && typeof result.rowsAffected === 'number') {
-        totalRowsAffected += result.rowsAffected;
-      }
-    }
+    const { lastResult, totalRowsAffected } = await executeScriptBatches(pool, script, dryRun);
     
     if (created) await pool.close();
     
