@@ -1187,9 +1187,13 @@ ${result.diff}`;
           applyBtn.addEventListener('click', async () => {
             if (!confirm('Apply implementation to ' + env + '? This will execute DDL changes.')) return;
             const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
-            const respApply = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combined, autoCreateSchemas: getAutoSchemasFlag() }, meta)) });
+            const respApply = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env, script: combined, rollbackScript: combinedRollback, autoCreateSchemas: getAutoSchemasFlag() }, meta)) });
             const appJson = await respApply.json();
-            if (appJson.success) { resBlock.innerHTML = '<div style="color:green">Apply succeeded</div>'; } else { resBlock.innerHTML = '<div style="color:red">Apply failed: '+(appJson.message||'')+'</div>'; }
+            if (appJson.success) {
+              const commitInfo = (appJson.git && appJson.git.commitHash) ? ` Commit: ${appJson.git.commitHash}` : '';
+              const filesInfo = (appJson.git && appJson.git.files && appJson.git.files.length) ? ` Files: ${appJson.git.files.join(', ')}` : '';
+              resBlock.innerHTML = `<div style="color:green">Apply succeeded.${commitInfo ? (' '+commitInfo) : ''}${filesInfo ? (' '+filesInfo) : ''}</div>`;
+            } else { resBlock.innerHTML = '<div style="color:red">Apply failed: '+(appJson.message||'')+'</div>'; }
           });
           resBlock.appendChild(applyBtn);
 
@@ -1787,7 +1791,7 @@ ${result.diff}`;
         });
         controls.appendChild(validateBtn);
 
-        const applyBtn = document.createElement('button'); applyBtn.textContent = 'Apply Implementation to ' + tgt; applyBtn.style.marginLeft = '8px';
+  const applyBtn = document.createElement('button'); applyBtn.textContent = 'Apply Implementation to ' + tgt; applyBtn.style.marginLeft = '8px';
         // element to show detailed status
         const applyStatus = document.createElement('div'); applyStatus.style.marginTop = '8px';
         applyBtn.addEventListener('click', async () => {
@@ -1798,13 +1802,15 @@ ${result.diff}`;
           try {
             const meta = { user: document.getElementById('metaUser').value || null, correlationId: document.getElementById('metaCorrelation').value || null, gitCommit: document.getElementById('metaGitCommit').value || null };
             const selectedObjects = (typeof objects !== 'undefined' && Array.isArray(objects)) ? objects.map(o => `${o.schema}.${o.name}`) : [];
-            const respA = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl, autoCreateSchemas: getAutoSchemasFlag(), objects: selectedObjects }, meta)) });
+            const respA = await fetch('/ddl/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ env: tgt, script: json.combinedImpl, rollbackScript: json.combinedRollback, autoCreateSchemas: getAutoSchemasFlag(), objects: selectedObjects }, meta)) });
             // try parse as JSON, fall back to text
             let bodyText = ''; let parsed = null;
             try { parsed = await respA.json(); } catch (e) { bodyText = await respA.text(); }
             console.log('Apply response', { status: respA.status, parsed, bodyText });
             if (parsed && parsed.success) {
-              applyStatus.innerHTML = '<span style="color:green">Apply succeeded</span>';
+              const commitInfo = (parsed.git && parsed.git.commitHash) ? ` Commit: ${parsed.git.commitHash}` : '';
+              const filesInfo = (parsed.git && parsed.git.files && parsed.git.files.length) ? ` Files: ${parsed.git.files.join(', ')}` : '';
+              applyStatus.innerHTML = `<span style="color:green">Apply succeeded.${commitInfo ? (' '+commitInfo) : ''}${filesInfo ? (' '+filesInfo) : ''}</span>`;
             } else {
               const msg = parsed ? (parsed.message || JSON.stringify(parsed)) : bodyText || 'Unknown error';
               applyStatus.innerHTML = `<div style="color:#b21"><strong>Apply failed</strong>: ${escapeHtml(String(msg))}</div>`;

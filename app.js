@@ -610,6 +610,33 @@ async function writeAudit(entry) {
   }
 }
 
+// Helper to format objects list as DB.Schema.Name for commit messages
+function formatObjectsForCommit(envKey, objects) {
+  try {
+    const db = (sqlConfigs && envKey && sqlConfigs[envKey] && sqlConfigs[envKey].database) ? sqlConfigs[envKey].database : String(envKey || 'unknown');
+    const arr = Array.isArray(objects) ? objects : (objects ? [objects] : []);
+    const norm = arr
+      .map(o => {
+        if (!o) return null;
+        if (typeof o === 'string') {
+          // Accept already dotted strings like Schema.Name
+          return `${db}.${o}`;
+        }
+        if (o && typeof o === 'object') {
+          const schema = o.schema || 'dbo';
+          const name = o.name || o.table || o.object || '';
+          if (!name) return null;
+          return `${db}.${schema}.${name}`;
+        }
+        return null;
+      })
+      .filter(Boolean);
+    return norm.join(', ');
+  } catch (_) {
+    return Array.isArray(objects) ? objects.join(', ') : (objects || 'multiple');
+  }
+}
+
 // DB-backed audit: ensure table exists and insert rows
 const auditTableEnsured = {};
 async function ensureAuditTableInDb(env) {
@@ -2073,34 +2100,28 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
   // gather optional metadata
     const meta = { user: req.body.user || req.headers['x-user'] || null, correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null, gitCommit: req.body.gitCommit || req.headers['x-git-commit'] || null, clientIp: req.ip || req.headers['x-forwarded-for'] || null };
     
-    // Save script to Git if not a dry run
+    // Save implementation (and optional rollback) script(s) to Git if not a dry run
     if (!dryRun) {
       try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const scriptFileName = `${timestamp}_implementation_${env}.sql`;
-        const scriptPath = path.join(__dirname, 'scripts', scriptFileName);
-        
-        // Ensure scripts directory exists
-        if (!fs.existsSync(path.dirname(scriptPath))) {
-          fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+        const objectsForCommit = formatObjectsForCommit(env, req.body.objects || []);
+        const scripts = [ { content: script, action: 'implementation', suffix: '' } ];
+        const rollbackScript = req.body.rollbackScript || null;
+        if (rollbackScript && typeof rollbackScript === 'string' && rollbackScript.trim()) {
+          scripts.push({ content: rollbackScript, action: 'rollback', suffix: '' });
         }
-        
-        // Write script to file
-        fs.writeFileSync(scriptPath, script);
-        
-        // Commit to Git
-        const gitResult = await gitCommitScript(scriptPath, `Implementation script applied to ${env}`, {
-          env,
+        const gitSave = await GitManager.saveScripts(scripts, {
+          environment: env,
           user: meta.user || 'system',
           action: 'implementation',
-          objects: req.body.objects || 'multiple',
-          correlationId: meta.correlationId
+          correlationId: meta.correlationId,
+          timestamp: new Date().toISOString(),
+          rowsAffected: totalRowsAffected,
+          objects: objectsForCommit
         });
-        
-        meta.gitCommitHash = gitResult.commitHash;
+        meta.gitCommitHash = gitSave && gitSave.commitHash;
       } catch (gitError) {
         console.log('Git commit error:', gitError);
-        // Don't fail the entire operation if Git fails
+        // Non-fatal
       }
     }
     
@@ -2131,35 +2152,22 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
     
     if (created) await pool.close();
     
-    // Save rollback script to filesystem and commit to Git (if not dry run)
+    // Save rollback script and commit to Git (if not dry run)
     if (!dryRun) {
       try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-        const user = req.body.user || req.headers['x-user'] || 'unknown';
-        const correlationId = req.body.correlationId || req.headers['x-correlation-id'] || '';
-        const filename = `${timestamp}_rollback_${env}_${user}_${correlationId.substring(0, 8) || 'manual'}.sql`;
-        const scriptPath = path.join(__dirname, 'scripts', filename);
-        
-        // Ensure scripts directory exists
-        if (!fs.existsSync(path.join(__dirname, 'scripts'))) {
-          fs.mkdirSync(path.join(__dirname, 'scripts'), { recursive: true });
-        }
-        
-        // Write rollback script to file
-        fs.writeFileSync(scriptPath, script, 'utf8');
-        
-        // Commit to Git with metadata
-        await gitCommitScript(filename, {
+        const objectsForCommit = formatObjectsForCommit(env, req.body.objects || []);
+        await GitManager.saveScript(script, {
           environment: env,
-          user: user,
+          user: req.body.user || req.headers['x-user'] || 'unknown',
           action: 'rollback',
-          correlationId: correlationId,
+          correlationId: req.body.correlationId || req.headers['x-correlation-id'] || '',
           timestamp: new Date().toISOString(),
-          rowsAffected: totalRowsAffected
+          rowsAffected: totalRowsAffected,
+          objects: objectsForCommit
         });
       } catch (gitError) {
         console.error('Git commit error for rollback:', gitError);
-        // Don't fail the rollback if Git commit fails
+        // Non-fatal
       }
     }
     
@@ -2278,11 +2286,15 @@ const GitManager = {
 
 `;
       
-      // Write script with header
-      fs.writeFileSync(scriptPath, header + scriptContent, 'utf8');
-      
-      // Add to Git
-      await execAsync(`git add "${filename}"`, { cwd: path.join(__dirname, 'scripts') });
+  // Write script with header and also a clean variant
+  fs.writeFileSync(scriptPath, header + scriptContent, 'utf8');
+  const cleanFilename = `${timestamp}_${action}_${env}_${user}_${correlationId}_clean.sql`;
+  const cleanPath = path.join(__dirname, 'scripts', cleanFilename);
+  fs.writeFileSync(cleanPath, scriptContent, 'utf8');
+
+  // Add to Git (both variants)
+  await execAsync(`git add "${filename}"`, { cwd: path.join(__dirname, 'scripts') });
+  await execAsync(`git add "${cleanFilename}"`, { cwd: path.join(__dirname, 'scripts') });
       
       // Create detailed commit message
       const commitMessage = `${action.toUpperCase()}: ${env} - ${user}
@@ -2473,6 +2485,81 @@ ${scriptContent.substring(0, 500)}${scriptContent.length > 500 ? '...' : ''}`;
     }
     
     return metadata;
+  },
+
+  // Save and commit multiple scripts to Git in a single commit (e.g., implementation + rollback)
+  async saveScripts(scripts, metadata) {
+    try {
+      await this.initRepository();
+
+      if (!Array.isArray(scripts) || scripts.length === 0) {
+        return { success: false, error: 'No scripts provided' };
+      }
+
+      const baseTs = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      const env = metadata.environment || 'unknown';
+      const user = metadata.user || 'system';
+      const correlationId = (metadata.correlationId || '').substring(0, 8) || 'manual';
+
+      const createdFiles = [];
+      for (const entry of scripts) {
+        if (!entry || typeof entry.content !== 'string' || !entry.content.trim()) continue;
+        const action = (entry.action || metadata.action || 'script').toLowerCase();
+        const suffix = entry.suffix ? `_${entry.suffix}` : '';
+        const filename = `${baseTs}_${action}_${env}_${user}_${correlationId}${suffix}.sql`;
+        const scriptPath = path.join(__dirname, 'scripts', filename);
+
+        const header = `-- SQL Portal Script Tracking\n-- Timestamp: ${metadata.timestamp || new Date().toISOString()}\n-- Environment: ${env}\n-- User: ${user}\n-- Action: ${action}\n-- Correlation ID: ${metadata.correlationId || 'N/A'}\n-- Rows Affected: ${metadata.rowsAffected || 'N/A'}\n-- Object(s): ${metadata.objects || 'N/A'}\n\n`;
+        // Write headered (tracked) file
+        fs.writeFileSync(scriptPath, header + entry.content, 'utf8');
+        // Also write a clean version without header for direct DB consumption
+        const cleanFilename = `${baseTs}_${action}_${env}_${user}_${correlationId}${suffix}_clean.sql`;
+        const cleanPath = path.join(__dirname, 'scripts', cleanFilename);
+        fs.writeFileSync(cleanPath, entry.content, 'utf8');
+
+        // Stage the file in the scripts directory
+        await execAsync(`git add "${filename}"`, { cwd: path.join(__dirname, 'scripts') });
+        await execAsync(`git add "${cleanFilename}"`, { cwd: path.join(__dirname, 'scripts') });
+        createdFiles.push({ filename, scriptPath, action });
+        createdFiles.push({ filename: cleanFilename, scriptPath: cleanPath, action: action + '_clean' });
+      }
+
+      if (createdFiles.length === 0) {
+        return { success: false, error: 'No valid scripts to save' };
+      }
+
+      // Build a concise multi-line commit message using multiple -m parts (Windows-safe)
+  const hasRollback = scripts.some(s => ((s.action || metadata.action || '').toLowerCase() === 'rollback'));
+  const baseTitle = `${(metadata.action || 'script').toUpperCase()}: ${env} - ${user}`;
+  const primaryTitle = hasRollback ? `${(metadata.action || 'script').toUpperCase()}(+RB): ${env} - ${user}` : baseTitle;
+      const parts = [
+        primaryTitle,
+        `Environment: ${env}`,
+        `User: ${user}`,
+        `Action: ${metadata.action || 'script'}`,
+        `Timestamp: ${metadata.timestamp || new Date().toISOString()}`,
+        `Correlation ID: ${metadata.correlationId || 'N/A'}`,
+        `Rows Affected: ${metadata.rowsAffected || 'N/A'}`,
+        `Objects: ${metadata.objects ? (Array.isArray(metadata.objects) ? metadata.objects.join(', ') : metadata.objects) : 'N/A'}`,
+        `Files: ${createdFiles.map(f => f.filename).join(', ')}`
+      ];
+      let commitCmd = 'git commit';
+      parts.forEach(p => { commitCmd += ` -m "${String(p).replace(/"/g, '\\"')}"`; });
+      await execAsync(commitCmd, { cwd: __dirname });
+
+      // Get commit hash
+      const { stdout: commitHash } = await execAsync('git rev-parse HEAD', { cwd: __dirname });
+
+      return {
+        success: true,
+        commitHash: commitHash.trim(),
+        files: createdFiles.map(f => f.filename),
+        message: 'Scripts saved and committed to Git'
+      };
+    } catch (error) {
+      console.error('Git saveScripts error:', error);
+      return { success: false, error: error.message };
+    }
   }
 };
 
@@ -2569,7 +2656,7 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
     
     if (created) await pool.close();
     
-    // Save to Git if not dry run
+    // Save to Git if not dry run (implementation + optional rollback as a single commit)
     if (!dryRun) {
       const gitMetadata = {
         environment: env,
@@ -2578,11 +2665,15 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
         correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null,
         timestamp: new Date().toISOString(),
         rowsAffected: totalRowsAffected,
-        objects: req.body.objects || 'multiple',
+        objects: formatObjectsForCommit(env, req.body.objects || []),
         executionTime: Date.now() - startTime
       };
-      
-      gitResult = await GitManager.saveScript(script, gitMetadata);
+      const scriptsToSave = [{ content: script, action: 'implementation', suffix: '' }];
+      const rollbackScript = req.body.rollbackScript || null;
+      if (rollbackScript && typeof rollbackScript === 'string' && rollbackScript.trim()) {
+        scriptsToSave.push({ content: rollbackScript, action: 'rollback', suffix: '' });
+      }
+      gitResult = await GitManager.saveScripts(scriptsToSave, gitMetadata);
     }
     
     // Write audit log
@@ -2602,7 +2693,7 @@ app.post('/ddl/apply', express.json(), async (req, res) => {
       rowsAffected: totalRowsAffected, 
       scriptPreview: script.substring(0, 1000),
       gitCommit: gitResult?.commitHash || null,
-      gitFile: gitResult?.filename || null
+      gitFile: Array.isArray(gitResult?.files) ? gitResult.files.join(', ') : (gitResult?.filename || null)
     }, meta));
     
     return res.json({ 
@@ -2667,7 +2758,7 @@ app.post('/ddl/rollback', express.json(), async (req, res) => {
         correlationId: req.body.correlationId || req.headers['x-correlation-id'] || null,
         timestamp: new Date().toISOString(),
         rowsAffected: totalRowsAffected,
-        objects: req.body.objects || 'multiple',
+        objects: formatObjectsForCommit(env, req.body.objects || []),
         executionTime: Date.now() - startTime
       };
       

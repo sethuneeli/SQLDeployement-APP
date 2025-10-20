@@ -4,7 +4,8 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"No unit tests configured\"",
+    "move:dev:test": "powershell -NoProfile -ExecutionPolicy Bypass -File ./tools/test-move-dev-to-test.ps1 -Name Customers -Schema Sales"
   },
   "keywords": [],
   "author": "",
