@@ -1,0 +1,2 @@
+ALTER TABLE [dbo].[NewMUFO_Tracker] DROP COLUMN [PeriodID]
+GO
